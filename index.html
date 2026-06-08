@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="theme-color" content="#1E4D2B">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="BUX Fuel">
+<title>BUX Fuel — הדלק שלך 🦌</title>
+<link rel="manifest" href="./manifest.json">
+<link rel="icon" type="image/png" href="./icons/icon-192.png">
+<link rel="apple-touch-icon" href="./icons/icon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ===== אונבורדינג ===== -->
+  <section id="screen-onboarding" class="screen">
+    <div class="center-logo"><img src="./logos/logo-badge-green.png" alt="CrossFit BUX"></div>
+    <div id="onboarding-body"></div>
+  </section>
+
+  <!-- ===== בית ===== -->
+  <section id="screen-home" class="screen">
+    <div class="appbar">
+      <div class="brand"><img src="./logos/logo-header-yellow.png" alt="BUX Fuel"></div>
+      <button class="lock-btn" id="home-lock" title="כניסת מאמן">🔒</button>
+    </div>
+    <div id="home-body"></div>
+  </section>
+
+  <!-- ===== הוספת ארוחה ===== -->
+  <section id="screen-meal" class="screen">
+    <div class="subhead">
+      <button class="back" data-nav="home">→</button>
+      <h2>➕ הוספת ארוחה</h2>
+    </div>
+    <div id="meal-body"></div>
+  </section>
+
+  <!-- ===== הוספת אימון ===== -->
+  <section id="screen-activity" class="screen">
+    <div class="subhead">
+      <button class="back" data-nav="home">→</button>
+      <h2>🏋️ הוספת אימון</h2>
+    </div>
+    <div id="activity-body"></div>
+  </section>
+
+  <!-- ===== מאמן AI ===== -->
+  <section id="screen-coach" class="screen">
+    <div class="appbar">
+      <div class="brand"><img src="./logos/logo-header-yellow.png" alt="BUX Fuel"></div>
+      <span class="date">מאמן התזונה 🦌</span>
+    </div>
+    <div id="coach-body"></div>
+  </section>
+
+  <!-- ===== התקדמות ===== -->
+  <section id="screen-progress" class="screen">
+    <div class="appbar">
+      <div class="brand"><img src="./logos/logo-header-yellow.png" alt="BUX Fuel"></div>
+      <span class="date">ההתקדמות שלי</span>
+    </div>
+    <div id="progress-body"></div>
+  </section>
+
+  <!-- ===== פרופיל ===== -->
+  <section id="screen-profile" class="screen">
+    <div class="appbar">
+      <div class="brand"><img src="./logos/logo-header-yellow.png" alt="BUX Fuel"></div>
+      <button class="lock-btn" id="profile-lock" title="כניסת מאמן">🔒</button>
+    </div>
+    <div id="profile-body"></div>
+  </section>
+
+  <!-- ===== ניווט תחתון ===== -->
+  <nav class="tabbar" id="tabbar">
+    <button class="tab" data-nav="home"><span class="ti">🏠</span>בית</button>
+    <button class="tab" data-nav="coach"><span class="ti">💬</span>מאמן</button>
+    <button class="tab" data-nav="progress"><span class="ti">📈</span>התקדמות</button>
+    <button class="tab" data-nav="profile"><span class="ti">👤</span>פרופיל</button>
+  </nav>
+
+</div>
+
+<!-- טוסט -->
+<div class="toast" id="toast"></div>
+
+<!-- חלון קופץ כללי (PIN / הצלחה) -->
+<div class="overlay" id="overlay"><div class="modal" id="modal"></div></div>
+
+<script src="./config.js"></script>
+<script src="./app.js"></script>
+</body>
+</html>

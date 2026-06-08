@@ -1,0 +1,12 @@
+name = "bux-fuel"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+# מודל ברירת המחדל. אפשר לשנות כאן או דרך משתנה סביבה MODEL.
+[vars]
+MODEL = "claude-sonnet-4-6"
+# מומלץ אחרי הפריסה: הגדר את כתובת ה-Pages שלך כדי לאבטח CORS, למשל:
+# ALLOWED_ORIGIN = "https://bux-fuel.pages.dev"
+
+# את מפתח Anthropic מגדירים כסוד (לא כאן!), עם הפקודה:
+#   wrangler secret put ANTHROPIC_API_KEY
