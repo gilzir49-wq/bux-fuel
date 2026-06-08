@@ -880,11 +880,11 @@ function renderLogin(){
       <div class="sub">היומן התזונה של קרוספיט BUX</div></div>
     <div class="card">
       <h3>🏋️ כניסת מתאמנים</h3>
-      <div class="field"><label>שם</label><input id="auth-name" placeholder="השם שלך" autocomplete="off"></div>
+      <div class="field"><label>שם מלא</label><input id="auth-name" placeholder="שם פרטי + משפחה" autocomplete="off"></div>
       <div class="field"><label>קוד אישי</label><input id="auth-code" type="password" placeholder="קוד סודי משלך" autocomplete="off"></div>
       <div id="auth-msg" class="hint" style="color:var(--danger);min-height:18px"></div>
       <button class="btn" data-act="auth-go">כניסה / הרשמה</button>
-      <div class="hint" style="margin-top:12px">פעם ראשונה? פשוט בחר שם וקוד — וניצור לך חשבון. בכניסות הבאות תתחבר עם אותם פרטים, מכל מכשיר. כל אחד רואה רק את עצמו.</div>
+      <div class="hint" style="margin-top:12px">פעם ראשונה? בחר <b>שם מלא</b> וקוד אישי — וניצור לך חשבון. בכניסות הבאות תתחבר עם אותם פרטים, מכל מכשיר. כל אחד רואה רק את עצמו.</div>
     </div>
     <div class="card tight" style="text-align:center">
       <button class="btn ghost sm" data-act="coach-login" style="margin:0 auto">🧠 כניסת מאמן (גיא)</button>
