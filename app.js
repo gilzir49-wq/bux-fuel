@@ -3,7 +3,8 @@
 
 /* ---------- אחסון ---------- */
 const KEYS = { profile:'bux_profile', logs:'bux_logs', weights:'bux_weights', streak:'bux_streak', chat:'bux_chat' };
-const SYNC_KEYS = new Set([KEYS.profile, KEYS.logs, KEYS.weights, KEYS.streak]);
+// פרופיל (יעדים) נכתב בנפרד (pushProfile) כדי שלא ידרוס שינויים של המאמן.
+const SYNC_KEYS = new Set([KEYS.logs, KEYS.weights, KEYS.streak]);
 let suppressSync = false;
 const store = {
   get(k, def){ try{ const v=localStorage.getItem(k); return v==null?def:JSON.parse(v); }catch(e){ return def; } },
@@ -22,6 +23,7 @@ let USER=null; try{ USER=JSON.parse(localStorage.getItem('bux_user')||'null'); }
 function uurl(p){ return `${CLOUD.db}/${CLOUD.node}/${p}.json`; }
 async function cloudGet(p){ try{ const r=await fetch(uurl(p),{cache:'no-store'}); return r.ok?await r.json():null; }catch(e){ return null; } }
 async function cloudPut(p,v){ try{ const r=await fetch(uurl(p),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(v)}); return r.ok; }catch(e){ return false; } }
+async function cloudPatch(p,v){ try{ const r=await fetch(uurl(p),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(v)}); return r.ok; }catch(e){ return false; } }
 async function cloudFetchUsers(){ const o=await cloudGet('users')||{}; return Object.entries(o).map(([uid,v])=>({uid,...v})); }
 async function sha(s){ const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s+'::buxfuel')); return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join(''); }
 
@@ -31,14 +33,15 @@ function syncPush(){
   setSync('☁️ שומר...');
   clearTimeout(pushT);
   pushT=setTimeout(async()=>{
-    const blob={ name:USER.name, codeHash:USER.codeHash,
-      profile:store.get(KEYS.profile,null), logs:store.get(KEYS.logs,{}),
-      weights:store.get(KEYS.weights,[]), streak:store.get(KEYS.streak,{}),
-      updatedAt:Date.now() };
-    const ok=await cloudPut('users/'+USER.uid, blob);
+    // עדכון חלקי (PATCH) — רק הנתונים של המתאמן, בלי לגעת ב-profile (היעדים של המאמן)
+    const patch={ logs:store.get(KEYS.logs,{}), weights:store.get(KEYS.weights,[]),
+      streak:store.get(KEYS.streak,{}), updatedAt:Date.now() };
+    const ok=await cloudPatch('users/'+USER.uid, patch);
     setSync(ok?'☁️ מסונכרן':'⚠️ לא מסונכרן');
   },700);
 }
+// כתיבת שדות פרופיל בנפרד (מיזוג, לא דריסה) — נקרא באונבורדינג ובשקילה
+async function pushProfile(obj){ if(!cloudOn()||!USER) return; const ok=await cloudPatch('users/'+USER.uid+'/profile', obj); setSync(ok?'☁️ מסונכרן':'⚠️ לא מסונכרן'); }
 function setSync(t){ const e=document.getElementById('sync-dot'); if(e) e.textContent=t; }
 
 async function pullUser(uid){
@@ -826,6 +829,7 @@ function finishOnboarding(){
     coachCode:'1234',
   };
   saveProfile(p);
+  pushProfile(p);
   if(p.weightStart) store.set(KEYS.weights,[{date:todayKey(),weight:p.weightStart}]);
   store.set(KEYS.streak,{current:0,longest:0,lastLogDate:null});
   showModal(`<img class="badge" src="./logos/logo-badge-green.png" alt="BUX">
@@ -979,11 +983,13 @@ async function saveParticipant(uid){
   const g=id=>(document.getElementById(id)||{}).value;
   const goalPick=document.querySelector('#d-goal .chip.on');
   const menu=[]; ['breakfast','lunch','dinner','snack'].forEach(k=>{ const v=g('d-m-'+k); if(v&&v.trim()) menu.push({meal:k,description:v.trim()}); });
-  const np={ ...(u.profile||{}), name:(u.profile&&u.profile.name)||u.name,
+  // עדכון חלקי — רק השדות שגיא עורכת, בלי לדרוס משקל/פרטים אישיים של המתאמן
+  const fields={
     calorieTarget:+g('d-cal')||0, proteinTarget:+g('d-prot')||0, carbTarget:+g('d-carb')||0, fatTarget:+g('d-fat')||0,
-    waterTarget:+g('d-water')||2.5, weightTarget:+g('d-wt')||((u.profile||{}).weightTarget||null),
+    waterTarget:+g('d-water')||2.5, weightTarget:+g('d-wt')||null,
     goal: goalPick?goalPick.dataset.val:((u.profile||{}).goal||'fat_loss'), menuPlan:menu, notes:g('d-notes')||'' };
-  const ok=await cloudPut('users/'+uid+'/profile', np); u.profile=np;
+  if(!u.profile) fields.name=u.name; // אם המתאמן עוד לא עבר אונבורדינג
+  const ok=await cloudPatch('users/'+uid+'/profile', fields); u.profile={...(u.profile||{}), ...fields};
   toast(ok?'נשמר למתאמן 🦌':'שמירה נכשלה');
 }
 async function delParticipant(uid){
@@ -1035,7 +1041,7 @@ document.addEventListener('click',e=>{
     case 'chat-send': sendChat(); break;
     case 'chat-sugg': sendChat(a.dataset.val); break;
     case 'weigh-in': { const v=+document.getElementById('weigh-in').value; if(!v){ toast('הזן משקל'); break; }
-      const p=getProfile(); p.weightCurrent=v; saveProfile(p);
+      const p=getProfile(); p.weightCurrent=v; saveProfile(p); pushProfile({weightCurrent:v});
       const w=store.get(KEYS.weights,[]); w.push({date:todayKey(),weight:v}); store.set(KEYS.weights,w);
       toast('המשקל נשמר ⚖️'); renderProgress(); break; }
     case 'weekly-report': weeklyReport(); break;
