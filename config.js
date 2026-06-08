@@ -1,10 +1,16 @@
 // ===== הגדרות BUX Fuel =====
-// כאן מגדירים את כתובת ה-Worker של Cloudflare (מנוע ה-AI).
-// כל עוד workerUrl ריק ("") — האפליקציה עובדת ב"מצב הדגמה":
-// היא מחשבת קלוריות, מאקרו ושריפה בעצמה (הערכה מקומית), בלי צורך במפתח API.
-// אחרי שתפרוס את ה-Worker (ראה README.md) — הדבק כאן את הכתובת שלו,
-// וכל ניתוחי ה-AI יעברו דרך Claude האמיתי.
 window.BUX_CONFIG = {
-  workerUrl: "",            // לדוגמה: "https://bux-fuel.<שם-המשתמש>.workers.dev"
+  // --- מנוע ה-AI (Cloudflare Worker) ---
+  // כל עוד ריק ("") — האפליקציה רצה ב"מצב הדגמה" (חישוב מקומי, בלי מפתח API).
+  // אחרי פריסת ה-Worker (ראה README.md) — הדבק כאן את הכתובת שלו.
+  workerUrl: "",
+
+  // --- ענן: חשבונות מתאמנים + דשבורד למאמן (Firebase) ---
+  // כל מתאמן מתחבר עם שם + קוד אישי, רואה רק את עצמו, והנתונים עוברים בין מכשירים.
+  // גיא נכנסת עם קוד המאמן ורואה את כולם.
+  firebaseDB: "https://command-center-gal-default-rtdb.europe-west1.firebasedatabase.app",
+  firebaseNode: "bux-fuel",
+  coachPin: "bux2026",   // קוד הכניסה של גיא לדשבורד. אפשר לשנות.
+
   appName: "BUX Fuel"
 };

@@ -3,10 +3,61 @@
 
 /* ---------- אחסון ---------- */
 const KEYS = { profile:'bux_profile', logs:'bux_logs', weights:'bux_weights', streak:'bux_streak', chat:'bux_chat' };
+const SYNC_KEYS = new Set([KEYS.profile, KEYS.logs, KEYS.weights, KEYS.streak]);
+let suppressSync = false;
 const store = {
   get(k, def){ try{ const v=localStorage.getItem(k); return v==null?def:JSON.parse(v); }catch(e){ return def; } },
-  set(k, v){ localStorage.setItem(k, JSON.stringify(v)); }
+  set(k, v){ localStorage.setItem(k, JSON.stringify(v)); if(SYNC_KEYS.has(k)) syncPush(); }
 };
+
+/* ===================== ענן: חשבונות + סנכרון ===================== */
+const CLOUD = {
+  db:   (window.BUX_CONFIG&&window.BUX_CONFIG.firebaseDB)||'',
+  node: (window.BUX_CONFIG&&window.BUX_CONFIG.firebaseNode)||'bux-fuel',
+  pin:  (window.BUX_CONFIG&&window.BUX_CONFIG.coachPin)||'bux2026',
+};
+const cloudOn = ()=> !!CLOUD.db;
+let USER=null; try{ USER=JSON.parse(localStorage.getItem('bux_user')||'null'); }catch(e){}
+
+function uurl(p){ return `${CLOUD.db}/${CLOUD.node}/${p}.json`; }
+async function cloudGet(p){ try{ const r=await fetch(uurl(p),{cache:'no-store'}); return r.ok?await r.json():null; }catch(e){ return null; } }
+async function cloudPut(p,v){ try{ const r=await fetch(uurl(p),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(v)}); return r.ok; }catch(e){ return false; } }
+async function cloudFetchUsers(){ const o=await cloudGet('users')||{}; return Object.entries(o).map(([uid,v])=>({uid,...v})); }
+async function sha(s){ const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s+'::buxfuel')); return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join(''); }
+
+let pushT=null;
+function syncPush(){
+  if(!cloudOn() || !USER || suppressSync) return;
+  setSync('☁️ שומר...');
+  clearTimeout(pushT);
+  pushT=setTimeout(async()=>{
+    const blob={ name:USER.name, codeHash:USER.codeHash,
+      profile:store.get(KEYS.profile,null), logs:store.get(KEYS.logs,{}),
+      weights:store.get(KEYS.weights,[]), streak:store.get(KEYS.streak,{}),
+      updatedAt:Date.now() };
+    const ok=await cloudPut('users/'+USER.uid, blob);
+    setSync(ok?'☁️ מסונכרן':'⚠️ לא מסונכרן');
+  },700);
+}
+function setSync(t){ const e=document.getElementById('sync-dot'); if(e) e.textContent=t; }
+
+async function pullUser(uid){
+  const u=await cloudGet('users/'+uid); if(!u) return;
+  suppressSync=true;
+  store.set(KEYS.profile, u.profile||null);
+  store.set(KEYS.logs, u.logs||{});
+  store.set(KEYS.weights, u.weights||[]);
+  store.set(KEYS.streak, u.streak||{current:0,longest:0,lastLogDate:null});
+  suppressSync=false;
+}
+function setUser(u){ USER=u; try{ localStorage.setItem('bux_user',JSON.stringify(u)); }catch(e){} }
+function logout(){
+  USER=null;
+  try{ localStorage.removeItem('bux_user'); }catch(e){}
+  [KEYS.profile,KEYS.logs,KEYS.weights,KEYS.streak,KEYS.chat].forEach(k=>localStorage.removeItem(k));
+  setCoach(false);
+  nav('login');
+}
 const R = Math.round;
 const clamp = (n,a,b)=>Math.max(a,Math.min(b,n));
 
@@ -151,7 +202,7 @@ function demoChat(messages){
 }
 
 /* ===================== ניווט ===================== */
-const SUB_SCREENS = ['onboarding','meal','activity'];
+const SUB_SCREENS = ['login','onboarding','meal','activity','dashboard'];
 let current='home';
 function nav(screen){
   current=screen;
@@ -163,7 +214,10 @@ function nav(screen){
   render(screen);
 }
 function render(screen){
-  if(screen==='home') renderHome();
+  if(screen==='login') renderLogin();
+  else if(screen==='dashboard') renderDashboard();
+  else if(screen==='onboarding') renderOnboarding();
+  else if(screen==='home') renderHome();
   else if(screen==='meal') renderMeal();
   else if(screen==='activity') renderActivity();
   else if(screen==='coach') renderCoach();
@@ -569,12 +623,7 @@ function weeklyReport(){
 /* ===================== פרופיל + מצב מאמן ===================== */
 function renderProfile(){
   const p=getProfile(); if(!p){ nav('onboarding'); return; }
-  const coach=isCoach();
   const goals={fat_loss:'ירידה באחוז שומן',muscle:'עליה במסת שריר',maintain:'שמירה',performance:'ביצועים'};
-  document.getElementById('profile-lock').classList.toggle('on',coach);
-  document.getElementById('profile-lock').textContent=coach?'🔓':'🔒';
-
-  if(coach){ renderCoachEditor(p); return; }
   // תצוגת מתאמן (קריאה בלבד)
   const mealName={breakfast:'בוקר',lunch:'צהריים',dinner:'ערב',snack:'ביניים'};
   document.getElementById('profile-body').innerHTML=`
@@ -593,9 +642,13 @@ function renderProfile(){
       ${p.menuPlan.map(m=>`<div class="list-item"><div><div class="li-main">${mealName[m.meal]||m.meal}</div><div class="li-sub">${esc(m.description)}</div></div></div>`).join('')}</div>`:''}
     ${p.notes?`<div class="card"><h3>📝 הערות מגיא</h3><p style="line-height:1.6">${esc(p.notes)}</p></div>`:''}
     <div class="card">
-      <h3>⚙️ פעולות</h3>
+      <h3>⚙️ החשבון שלי</h3>
+      ${USER?`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div><div class="li-main">מחובר כ-${esc(USER.name)}</div><div class="li-sub"><span id="sync-dot">☁️ מסונכרן</span> · עובד מכל מכשיר</div></div>
+      </div>`:''}
       <button class="btn ghost" data-act="export" style="margin-bottom:10px">💾 גיבוי הנתונים שלי</button>
-      <div class="readonly-note">כדי לשנות יעדים, תפריט או הערות — צריך כניסת מאמן (הקוד של גיא 🔒 למעלה).</div>
+      ${USER?'<button class="btn ghost" data-act="logout" style="margin-bottom:10px">🚪 התנתקות</button>':''}
+      <div class="readonly-note">היעדים, התפריט וההערות נקבעים על ידי גיא. כדי לעדכן אותם — פני אליה או כנסי למצב מאמן (🔒 למעלה).</div>
     </div>
     <div class="foot-note">BUX Fuel 🦌</div>
   `;
@@ -801,19 +854,142 @@ function waterSet(i){ const p=getProfile(); const per=(+p.waterTarget||2.5)*1000
 
 /* ===================== מאמן: קוד ===================== */
 function askCoachCode(){
-  if(isCoach()){ setCoach(false); toast('יצאת ממצב מאמן'); render(current); return; }
-  showModal(`<h2>🔐 כניסת מאמן</h2>
-    <p>הזן את הקוד כדי לערוך יעדים ותפריט.</p>
-    <input id="pin-input" class="pin" maxlength="8" inputmode="numeric" placeholder="••••" autocomplete="off">
+  if(isCoach()){ setCoach(false); toast('יצאת ממצב מאמן'); nav(USER?'home':'login'); return; }
+  showModal(`<h2>🧠 כניסת מאמן</h2>
+    <p>הזן את קוד המאמן כדי לראות ולנהל את כל המתאמנים.</p>
+    <input id="pin-input" class="pin" maxlength="14" type="password" placeholder="קוד מאמן" autocomplete="off" style="letter-spacing:6px;font-size:22px">
     <button class="btn" data-act="check-pin" style="margin-top:18px">כניסה</button>
     <button class="btn ghost" data-act="close-modal" style="margin-top:8px">ביטול</button>`);
   setTimeout(()=>document.getElementById('pin-input')?.focus(),100);
 }
 function checkPin(){
-  const p=getProfile()||{}; const code=p.coachCode||'1234';
   const val=(document.getElementById('pin-input')||{}).value||'';
-  if(val===code){ setCoach(true); closeModal(); toast('ברוך הבא, מאמן 🦌'); nav('profile'); }
+  if(val===CLOUD.pin){ setCoach(true); closeModal(); toast('ברוך הבא, מאמן 🦌'); nav('dashboard'); }
   else { toast('קוד שגוי'); const e=document.getElementById('pin-input'); if(e){ e.value=''; e.focus(); } }
+}
+
+/* ===================== התחברות מתאמן ===================== */
+function genId(){ return Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,7); }
+function renderLogin(){
+  document.getElementById('login-body').innerHTML=`
+    <div class="hello" style="text-align:center"><h1>ברוך הבא ל-<span>BUX Fuel</span> 🦌</h1>
+      <div class="sub">היומן התזונה של קרוספיט BUX</div></div>
+    <div class="card">
+      <h3>🏋️ כניסת מתאמנים</h3>
+      <div class="field"><label>שם</label><input id="auth-name" placeholder="השם שלך" autocomplete="off"></div>
+      <div class="field"><label>קוד אישי</label><input id="auth-code" type="password" placeholder="קוד סודי משלך" autocomplete="off"></div>
+      <div id="auth-msg" class="hint" style="color:var(--danger);min-height:18px"></div>
+      <button class="btn" data-act="auth-go">כניסה / הרשמה</button>
+      <div class="hint" style="margin-top:12px">פעם ראשונה? פשוט בחר שם וקוד — וניצור לך חשבון. בכניסות הבאות תתחבר עם אותם פרטים, מכל מכשיר. כל אחד רואה רק את עצמו.</div>
+    </div>
+    <div class="card tight" style="text-align:center">
+      <button class="btn ghost sm" data-act="coach-login" style="margin:0 auto">🧠 כניסת מאמן (גיא)</button>
+    </div>
+    <div class="foot-note">Building a healthy community · CrossFit BUX Yehud 🦌</div>`;
+  const c=document.getElementById('auth-code'); if(c) c.addEventListener('keydown',e=>{ if(e.key==='Enter') doAuth(); });
+}
+async function doAuth(){
+  const name=(document.getElementById('auth-name').value||'').trim();
+  const code=document.getElementById('auth-code').value||'';
+  const msg=document.getElementById('auth-msg');
+  if(name.length<2){ msg.textContent='נא להזין שם.'; return; }
+  if(code.length<3){ msg.textContent='בחר קוד של 3 תווים לפחות.'; return; }
+  msg.style.color='var(--muted)'; msg.textContent='בודק…';
+  const users=await cloudFetchUsers(); const norm=s=>(s||'').trim().toLowerCase();
+  const ex=users.find(u=>norm(u.name)===norm(name)); const h=await sha(code);
+  if(ex){
+    if(ex.codeHash===h){ setUser({uid:ex.uid,name:ex.name,codeHash:h}); msg.textContent=''; await afterLogin(); }
+    else { msg.style.color='var(--danger)'; msg.textContent='הקוד לא תואם לשם הזה 🔒'; }
+  } else {
+    const uid=genId(); await cloudPut('users/'+uid,{name,codeHash:h,createdAt:Date.now()});
+    setUser({uid,name,codeHash:h}); msg.textContent=''; await afterLogin();
+  }
+}
+
+/* ===================== דשבורד מאמן ===================== */
+let DASH_USERS=[];
+const GOAL_HE={fat_loss:'ירידה בשומן',muscle:'עליה במסה',maintain:'שמירה',performance:'ביצועים'};
+async function renderDashboard(){
+  const body=document.getElementById('dashboard-body');
+  body.innerHTML=`<div class="hello"><h1>דשבורד מאמן 🧠</h1><div class="sub">טוען מתאמנים...</div></div>
+    <div class="loading"><div class="spinner"></div></div>`;
+  DASH_USERS=(await cloudFetchUsers()).filter(u=>u.name);
+  DASH_USERS.sort((a,b)=>(a.name||'').localeCompare(b.name||'','he'));
+  const cards=DASH_USERS.map(u=>{
+    const p=u.profile||{}; const log=(u.logs&&u.logs[todayKey()])||blankLog(); const t=totals(log);
+    const cal=+p.calorieTarget||0; const pct=cal?clamp(t.kcal/cal,0,1):0;
+    const protPct=p.proteinTarget?clamp(t.protein/p.proteinTarget,0,1):0;
+    const dot=t.kcal===0?'#274d33':((pct>=0.8&&pct<=1.1&&protPct>=0.85)?'var(--yellow)':'#6b7c3a');
+    return `<div class="card tight" data-act="dash-open" data-uid="${u.uid}" style="cursor:pointer">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+        <span style="width:13px;height:13px;border-radius:50%;background:${dot};flex:none"></span>
+        <div style="flex:1;text-align:right"><div class="li-main" style="font-size:17px">${esc(u.name)}</div>
+          <div class="li-sub">${p.goal?GOAL_HE[p.goal]:'טרם הוגדרו יעדים'}</div></div>
+        <div style="text-align:left"><div style="font-weight:900;color:var(--yellow);font-size:18px">${R(t.kcal)}<span style="font-size:11px;color:var(--muted)">/${cal||'—'}</span></div>
+          <div class="li-sub">חלבון ${R(t.protein)}/${p.proteinTarget||'—'}</div></div>
+      </div></div>`;
+  }).join('');
+  body.innerHTML=`<div class="hello"><h1>דשבורד מאמן 🧠</h1><div class="sub">${DASH_USERS.length} מתאמנים · ${heDate()}</div></div>
+    <div style="padding:0 14px">${cards||'<div class="empty">עדיין אין מתאמנים רשומים</div>'}</div>
+    <div class="card tight" style="margin-top:14px"><button class="btn ghost" data-act="coach-exit">יציאה ממצב מאמן</button></div>
+    <div class="foot-note">🟡 עומד ביעד · 🟢 חלקי · ⚫ טרם רשם היום<br>לחיצה על מתאמן — צפייה ועריכת יעדים 🦌</div>`;
+}
+function renderParticipant(uid){
+  const u=DASH_USERS.find(x=>x.uid===uid); if(!u){ nav('dashboard'); return; }
+  const p=u.profile||{}; const log=(u.logs&&u.logs[todayKey()])||blankLog(); const t=totals(log);
+  const goalsArr=[['fat_loss','ירידה בשומן'],['muscle','עליה במסה'],['maintain','שמירה'],['performance','ביצועים']];
+  const mn={breakfast:'בוקר',lunch:'צהריים',dinner:'ערב',snack:'ביניים'};
+  const menu=p.menuPlan||[]; const gm=k=>(menu.find(m=>m.meal===k)||{}).description||'';
+  document.getElementById('dashboard-body').innerHTML=`
+    <div class="subhead"><button class="back" data-act="dash-back">→</button><h2>${esc(u.name)}</h2></div>
+    <div class="card">
+      <h3>📊 היום</h3>
+      <div class="macros" style="grid-template-columns:repeat(2,1fr)">
+        <div class="macro protein"><div class="mlabel">קלוריות</div><div class="mval">${R(t.kcal)}<span style="font-size:12px">/${p.calorieTarget||'—'}</span></div></div>
+        <div class="macro"><div class="mlabel">חלבון</div><div class="mval">${R(t.protein)}<span style="font-size:12px">/${p.proteinTarget||'—'}</span></div></div>
+      </div>
+      <div style="text-align:center;color:var(--muted);font-weight:700;margin-top:10px">⚖️ ${p.weightCurrent||'—'} ק"ג (יעד ${p.weightTarget||'—'}) · 🔥 ${R(t.burn)} קל'</div>
+      ${(log.meals||[]).length?'<div class="section-title" style="margin:14px 0 4px">ארוחות היום</div>'+log.meals.map(m=>`<div class="list-item"><div class="li-main" style="font-size:14px">${esc(m.description||'')}</div><div class="li-k">${R(m.kcal)}</div></div>`).join(''):'<div class="empty" style="padding:10px">עוד לא רשם היום</div>'}
+    </div>
+    <div class="card">
+      <h3>🎯 עריכת יעדים</h3>
+      <div class="row2">
+        <div class="field"><label>קלוריות</label><input id="d-cal" type="number" value="${p.calorieTarget||''}"></div>
+        <div class="field"><label>חלבון (ג')</label><input id="d-prot" type="number" value="${p.proteinTarget||''}"></div>
+        <div class="field"><label>פחמימה (ג')</label><input id="d-carb" type="number" value="${p.carbTarget||''}"></div>
+        <div class="field"><label>שומן (ג')</label><input id="d-fat" type="number" value="${p.fatTarget||''}"></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>מים (ליטר)</label><input id="d-water" type="number" step="0.1" value="${p.waterTarget||''}"></div>
+        <div class="field"><label>משקל יעד</label><input id="d-wt" type="number" step="0.1" value="${p.weightTarget||''}"></div>
+      </div>
+      <div class="field"><label>מטרה</label><div class="chips" id="d-goal">${goalsArr.map(([v,l])=>`<button class="chip ${p.goal===v?'on':''}" data-act="pick" data-group="d-goal" data-val="${v}">${l}</button>`).join('')}</div></div>
+    </div>
+    <div class="card">
+      <h3>📖 תפריט + הערות</h3>
+      ${['breakfast','lunch','dinner','snack'].map(k=>`<div class="field"><label>${mn[k]}</label><input id="d-m-${k}" value="${esc(gm(k))}" placeholder="${mn[k]}"></div>`).join('')}
+      <div class="field"><label>הערות אישיות</label><textarea id="d-notes">${esc(p.notes||'')}</textarea></div>
+    </div>
+    <button class="btn" data-act="dash-save" data-uid="${uid}" style="margin:0 14px">✓ שמור למתאמן</button>
+    <div class="card" style="margin-top:14px"><button class="btn danger" data-act="dash-del" data-uid="${uid}">🗑 מחק מתאמן</button></div>
+    <div class="foot-note">Let's Go BUX 🦌</div>`;
+}
+async function saveParticipant(uid){
+  const u=DASH_USERS.find(x=>x.uid===uid); if(!u) return;
+  const g=id=>(document.getElementById(id)||{}).value;
+  const goalPick=document.querySelector('#d-goal .chip.on');
+  const menu=[]; ['breakfast','lunch','dinner','snack'].forEach(k=>{ const v=g('d-m-'+k); if(v&&v.trim()) menu.push({meal:k,description:v.trim()}); });
+  const np={ ...(u.profile||{}), name:(u.profile&&u.profile.name)||u.name,
+    calorieTarget:+g('d-cal')||0, proteinTarget:+g('d-prot')||0, carbTarget:+g('d-carb')||0, fatTarget:+g('d-fat')||0,
+    waterTarget:+g('d-water')||2.5, weightTarget:+g('d-wt')||((u.profile||{}).weightTarget||null),
+    goal: goalPick?goalPick.dataset.val:((u.profile||{}).goal||'fat_loss'), menuPlan:menu, notes:g('d-notes')||'' };
+  const ok=await cloudPut('users/'+uid+'/profile', np); u.profile=np;
+  toast(ok?'נשמר למתאמן 🦌':'שמירה נכשלה');
+}
+async function delParticipant(uid){
+  await cloudPut('users/'+uid, null);
+  DASH_USERS=DASH_USERS.filter(x=>x.uid!==uid);
+  closeModal(); toast('המתאמן נמחק'); nav('dashboard');
 }
 
 /* ===================== גיבוי / איפוס ===================== */
@@ -872,6 +1048,15 @@ document.addEventListener('click',e=>{
     case 'reset-confirm': Object.values(KEYS).forEach(k=>localStorage.removeItem(k)); setCoach(false); closeModal(); location.reload(); break;
     case 'check-pin': checkPin(); break;
     case 'close-modal': closeModal(); break;
+    case 'auth-go': doAuth(); break;
+    case 'coach-login': askCoachCode(); break;
+    case 'coach-exit': setCoach(false); toast('יצאת ממצב מאמן'); nav(USER?'home':'login'); break;
+    case 'logout': logout(); break;
+    case 'dash-open': renderParticipant(a.dataset.uid); window.scrollTo(0,0); break;
+    case 'dash-back': nav('dashboard'); break;
+    case 'dash-save': saveParticipant(a.dataset.uid); break;
+    case 'dash-del': showModal(`<h2>למחוק את ${esc((DASH_USERS.find(x=>x.uid===a.dataset.uid)||{}).name||'')}?</h2><p>כל הנתונים של המתאמן יימחקו מהענן. אין חזרה.</p><button class="btn danger" data-act="dash-del-yes" data-uid="${a.dataset.uid}">כן, מחק</button><button class="btn ghost" data-act="close-modal" style="margin-top:8px">ביטול</button>`); break;
+    case 'dash-del-yes': delParticipant(a.dataset.uid); break;
     case 'del-meal': { const log=todayLog(); log.meals.splice(+a.dataset.i,1); saveLog(todayKey(),log); renderHome(); break; }
     case 'del-act': { const log=todayLog(); log.activities.splice(+a.dataset.i,1); saveLog(todayKey(),log); renderHome(); break; }
   }
@@ -879,11 +1064,16 @@ document.addEventListener('click',e=>{
 document.getElementById('overlay').addEventListener('click',e=>{ if(e.target.id==='overlay') closeModal(); });
 document.getElementById('home-lock').addEventListener('click',askCoachCode);
 document.getElementById('profile-lock').addEventListener('click',askCoachCode);
+document.getElementById('dash-exit').addEventListener('click',()=>{ setCoach(false); toast('יצאת ממצב מאמן'); nav(USER?'home':'login'); });
 
 /* ===================== אתחול ===================== */
-function boot(){
-  renderOnboarding();
-  if(getProfile()) nav('home'); else nav('onboarding');
+async function boot(){
   if('serviceWorker' in navigator){ navigator.serviceWorker.register('./sw.js').catch(()=>{}); }
+  if(cloudOn() && !USER){ nav('login'); return; }
+  await afterLogin();
+}
+async function afterLogin(){
+  if(cloudOn() && USER){ await pullUser(USER.uid); }
+  if(getProfile()) nav('home'); else nav('onboarding');
 }
 boot();
