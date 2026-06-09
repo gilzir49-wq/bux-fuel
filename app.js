@@ -107,7 +107,7 @@ async function coachChat(messages,ctx){ const r=await aiPost('/coach',{messages,
 
 /* ---------- מנוע הדגמה: ארוחות ---------- */
 // ערכים: per='100g' (ל-100 גרם) או 'unit' (ליחידה/מנה). [kcal,protein,carbs,fat]
-const FOODS = [
+const DEMO_FOODS = [
   ['חזה עוף','100g',[165,31,0,3.6]],['עוף','100g',[200,25,0,11]],['הודו','100g',[135,29,0,1]],
   ['בשר','100g',[250,26,0,16]],['סטייק','100g',[271,25,0,19]],['המבורגר','unit',[300,17,20,17]],
   ['סלמון','100g',[208,20,0,13]],['טונה','unit',[180,40,0,1]],['דג','100g',[140,20,0,6]],
@@ -134,7 +134,7 @@ function demoMeal(text){
   const segs = String(text||'').split(/[,،\n]|\sו\b|\sעם\s|\+/).map(s=>s.trim()).filter(Boolean);
   const items=[]; const total={kcal:0,protein:0,carbs:0,fat:0};
   segs.forEach(seg=>{
-    const food = FOODS.find(f=> seg.includes(f[0]));
+    const food = DEMO_FOODS.find(f=> seg.includes(f[0]));
     let qty=1, grams=null;
     const gm = seg.match(/(\d+(?:\.\d+)?)\s*(?:גרם|ג'|ג\b|g)/i); if(gm) grams=+gm[1];
     const ml = seg.match(/(\d+(?:\.\d+)?)\s*(?:מ"ל|מל|ml)/i); if(ml) grams=+ml[1];
@@ -356,74 +356,155 @@ function contextString(p,log,t){
   return s;
 }
 
-/* ===================== מסך הוספת ארוחה ===================== */
-let lastMeal=null, currentMealType='breakfast';
-function renderMeal(){
-  const p=getProfile()||{};
-  const types=[['breakfast','בוקר'],['lunch','צהריים'],['dinner','ערב'],['snack','ביניים']];
+/* ===================== מסך הוספת ארוחה (מאגר משרד הבריאות) ===================== */
+let FOODS=null, FOODS_LOADING=null;
+let mealItems=[], currentMealType='breakfast', mealMode='search', portionFood=null;
+const MEAL_TYPES=[['breakfast','בוקר'],['lunch','צהריים'],['dinner','ערב'],['snack','ביניים']];
+
+async function loadFoods(){
+  if(FOODS) return FOODS;
+  if(!FOODS_LOADING) FOODS_LOADING=fetch('./data/foods.json').then(r=>r.json()).then(d=>{FOODS=d;return d;}).catch(()=>{FOODS=[];return [];});
+  return FOODS_LOADING;
+}
+function mealTotals(){ return mealItems.reduce((t,i)=>{t.kcal+=i.kcal;t.protein+=i.protein;t.carbs+=i.carbs;t.fat+=i.fat;return t;},{kcal:0,protein:0,carbs:0,fat:0}); }
+function foodById(id){ return FOODS && FOODS.find(f=>f.i===+id); }
+
+async function renderMeal(){
   const h=new Date().getHours();
   currentMealType = h<11?'breakfast': h<16?'lunch': h<21?'dinner':'snack';
+  mealItems=[]; mealMode='search';
+  document.getElementById('meal-body').innerHTML=`<div class="card"><div class="loading"><div class="spinner"></div><div>טוען את מאגר המזון... 🦌</div></div></div>`;
+  await loadFoods();
+  buildMealUI();
+}
+
+function buildMealUI(){
+  const tot=mealTotals();
   document.getElementById('meal-body').innerHTML=`
     <div class="card">
-      <div class="field">
-        <label>איזו ארוחה?</label>
-        <div class="chips" id="meal-types">
-          ${types.map(([v,l])=>`<button class="chip ${v===currentMealType?'on':''}" data-act="meal-type" data-val="${v}">${l}</button>`).join('')}
+      <div class="field"><label>איזו ארוחה?</label>
+        <div class="chips" id="meal-types">${MEAL_TYPES.map(([v,l])=>`<button class="chip ${v===currentMealType?'on':''}" data-act="meal-type" data-val="${v}">${l}</button>`).join('')}</div>
+      </div>
+      <div class="chips" style="margin-bottom:12px">
+        <button class="chip ${mealMode==='search'?'on':''}" data-act="meal-mode" data-val="search">🔍 חיפוש מהמאגר</button>
+        <button class="chip ${mealMode==='free'?'on':''}" data-act="meal-mode" data-val="free">✍️ טקסט חופשי</button>
+      </div>
+      ${mealMode==='search'?`
+        <div class="field" style="margin-bottom:8px">
+          <input id="food-search" placeholder="חפש מאכל… לחם, חזה עוף, קוטג'" autocomplete="off">
+          <div class="hint">📋 נתוני משרד הבריאות — קלוריות ומאקרו אמיתיים ל-100 גרם.</div>
         </div>
-      </div>
-      <div class="field">
-        <label>מה אכלת? כתוב בחופשיות</label>
-        <textarea id="meal-text" placeholder="לדוגמה: חזה עוף 200 גרם, צלחת אורז, סלט ירקות עם טחינה ופיתה"></textarea>
-        <div class="hint">תאר כמו שבא לך — המנוע יזהה את המאכלים ויעריך קלוריות ומאקרו.</div>
-      </div>
-      ${(p.menuPlan&&p.menuPlan.length)?'<button class="btn ghost sm" data-act="load-menu" style="margin-bottom:12px">📥 טען מהתפריט שלי</button>':''}
-      <button class="btn" data-act="analyze-meal">🦌 נתח את הארוחה</button>
+        <div class="chips" style="margin-bottom:6px">${['ביצה','לחם','אורז','חזה עוף',"קוטג'",'בננה','סלט','חלב'].map(s=>`<button class="chip" data-act="food-quick" data-val="${esc(s)}">${s}</button>`).join('')}</div>
+        <div id="food-results"></div>`
+      :`
+        <div class="field"><textarea id="meal-text" placeholder="תאר בחופשיות: חזה עוף 200 גרם, צלחת אורז, סלט"></textarea>
+          <div class="hint">הערכה מהירה (לא מהמאגר הרשמי) — לדיוק מלא העדף חיפוש.</div></div>
+        <button class="btn ghost sm" data-act="analyze-meal">🦌 נתח טקסט</button>
+        <div id="ft-result"></div>`}
     </div>
-    <div id="meal-result"></div>
-  `;
+    <div class="card">
+      <h3>🍽️ הארוחה שלי</h3>
+      ${mealItems.length?mealItems.map((it,i)=>`<div class="list-item">
+        <div><div class="li-main" style="font-size:14px">${esc(it.name)}</div><div class="li-sub">${esc(it.qty)} · ח ${R(it.protein)} פ ${R(it.carbs)} ש ${R(it.fat)}</div></div>
+        <div style="display:flex;align-items:center;gap:8px"><span class="li-k">${R(it.kcal)}</span><button class="li-del" data-act="item-del" data-i="${i}">🗑</button></div></div>`).join('')
+        :'<div class="empty">חפש והוסף מאכלים — הם יצטברו כאן</div>'}
+      ${mealItems.length?`<div class="total-line" style="margin-top:12px"><div class="li-main">סה"כ</div><div class="tk">${R(tot.kcal)}</div></div>
+        <div class="hint" style="text-align:center;margin-top:6px">חלבון ${R(tot.protein)} · פחמימה ${R(tot.carbs)} · שומן ${R(tot.fat)} ג'</div>
+        <button class="btn" data-act="save-meal" style="margin-top:12px">✓ שמור ארוחה</button>`:''}
+    </div>`;
+  const s=document.getElementById('food-search');
+  if(s){ s.addEventListener('input',()=>renderFoodResults(s.value)); s.focus(); }
+}
+
+const PROCESSED_RE=/מיובש|אבקת|אבקה|מסוכר|מטוגן|קלוי|משומר|תרכיז|תמצית|מיוחד|לתינוק|פורמולה/;
+function searchFoods(q){
+  q=(q||'').trim(); if(q.length<2||!FOODS) return [];
+  const words=q.split(/\s+/); const w0=words[0]; const res=[];
+  for(const f of FOODS){
+    const n=f.n;
+    if(!words.every(w=>n.includes(w))) continue;
+    let s;
+    if(n===q) s=1000;
+    else if(n.startsWith(q)) s=700-n.length*0.3;
+    else { const toks=n.split(/[ ,]+/); s=(toks.some(t=>t.startsWith(w0))?450:200)-n.length*0.3; }
+    if(PROCESSED_RE.test(n)) s-=130;   // העדף מאכלים בסיסיים על פני מעובדים
+    res.push([s,f]);
+  }
+  res.sort((a,b)=>b[0]-a[0]);
+  return res.slice(0,30).map(x=>x[1]);
+}
+function renderFoodResults(q){
+  const box=document.getElementById('food-results'); if(!box) return;
+  if(!q || q.trim().length<2){ box.innerHTML=''; return; }
+  const res=searchFoods(q);
+  box.innerHTML=res.length?res.map(f=>`<div class="list-item" data-act="food-pick" data-i="${f.i}" style="cursor:pointer">
+    <div><div class="li-main" style="font-size:14px">${esc(f.n)}</div><div class="li-sub">ל-100 ג': ח ${R(f.p)} פ ${R(f.c)} ש ${R(f.f)}</div></div>
+    <div class="li-k">${R(f.k)}</div></div>`).join('')
+    :'<div class="empty">לא נמצא — נסה מילה אחרת</div>';
+}
+
+function openPortion(id){
+  const f=foodById(id); if(!f) return; portionFood=f;
+  const units=[['גרם',1],...Object.entries(f.u||{})];
+  const defIdx=(f.u&&Object.keys(f.u).length)?1:0;
+  showModal(`<h2 style="font-size:19px;line-height:1.3">${esc(f.n)}</h2>
+    <p style="font-size:13px">בחר כמות — חישוב מהמאגר הרשמי 🦌</p>
+    <div class="row2" style="text-align:right">
+      <div class="field"><label>כמות</label><input id="pt-amt" type="number" step="0.25" value="1" inputmode="decimal"></div>
+      <div class="field"><label>יחידה</label><select id="pt-unit">${units.map(([u,g],i)=>`<option value="${g}" ${i===defIdx?'selected':''}>${esc(u)}${g!==1?` (${R(g)} ג')`:''}</option>`).join('')}</select></div>
+    </div>
+    <div class="total-line" style="margin:4px 0 14px"><div class="li-main">קלוריות</div><div class="tk" id="pt-kcal">0</div></div>
+    <button class="btn" data-act="portion-add">➕ הוסף לארוחה</button>
+    <button class="btn ghost" data-act="close-modal" style="margin-top:8px">ביטול</button>`);
+  const upd=()=>{ const amt=+document.getElementById('pt-amt').value||0; const g=+document.getElementById('pt-unit').value||1;
+    const grams=amt*g; document.getElementById('pt-kcal').textContent=`${R(f.k*grams/100)} (${R(grams)} ג')`; };
+  ['pt-amt','pt-unit'].forEach(id=>{ const e=document.getElementById(id); if(e){ e.addEventListener('input',upd); e.addEventListener('change',upd); } });
+  upd();
+}
+function portionAdd(){
+  const f=portionFood; if(!f) return;
+  const amt=+document.getElementById('pt-amt').value||0; const sel=document.getElementById('pt-unit');
+  const g=+sel.value||1; const unitName=sel.options[sel.selectedIndex].text.split(' (')[0];
+  const grams=amt*g; if(grams<=0){ toast('בחר כמות'); return; }
+  const fac=grams/100;
+  mealItems.push({ name:f.n, qty: g===1?`${R(grams)} ג'`:`${amt} ${unitName}`, grams:R(grams),
+    kcal:R(f.k*fac), protein:R(f.p*fac), carbs:R(f.c*fac), fat:R(f.f*fac) });
+  portionFood=null; closeModal(); buildMealUI();
 }
 
 async function doAnalyzeMeal(){
   const text=(document.getElementById('meal-text').value||'').trim();
   if(!text){ toast('כתוב קודם מה אכלת'); return; }
-  const box=document.getElementById('meal-result');
-  box.innerHTML=`<div class="card"><div class="loading"><div class="spinner"></div><div>מחשב את הדלק שלך... 🦌</div></div></div>`;
+  const box=document.getElementById('ft-result');
+  box.innerHTML=`<div class="loading" style="padding:16px"><div class="spinner"></div><div>מחשב... 🦌</div></div>`;
   try{
-    const r=await analyzeMeal(text);
-    lastMeal={ ...r, text };
-    const t=r.total||{kcal:0,protein:0,carbs:0,fat:0};
-    box.innerHTML=`<div class="card analyze-result">
-      <h3>🍽️ פירוט הארוחה</h3>
-      ${(r.items||[]).map(it=>`<div class="item-line">
-        <div><div class="iname">${esc(it.name)}</div><div class="imac">ח ${R(it.protein)} · פ ${R(it.carbs)} · ש ${R(it.fat)}</div></div>
-        <div class="ikcal">${R(it.kcal)}</div></div>`).join('')||'<div class="empty">לא זוהו פריטים</div>'}
-      ${r.note?`<div class="hint" style="margin-top:12px">💬 ${esc(r.note)}</div>`:''}
-      <div class="section-title" style="margin:16px 0 8px">אפשר לכוונן לפני שמירה</div>
-      <div class="row2">
-        <div class="field" style="margin-bottom:8px"><label>קלוריות</label><input id="ed-kcal" type="number" value="${R(t.kcal)}"></div>
-        <div class="field" style="margin-bottom:8px"><label>חלבון (ג')</label><input id="ed-prot" type="number" value="${R(t.protein)}"></div>
-        <div class="field" style="margin-bottom:8px"><label>פחמימה (ג')</label><input id="ed-carb" type="number" value="${R(t.carbs)}"></div>
-        <div class="field" style="margin-bottom:8px"><label>שומן (ג')</label><input id="ed-fat" type="number" value="${R(t.fat)}"></div>
+    const r=await analyzeMeal(text); const t=r.total||{kcal:0,protein:0,carbs:0,fat:0};
+    box.innerHTML=`<div class="analyze-result" style="margin-top:10px">
+      ${(r.items||[]).map(it=>`<div class="item-line"><div class="iname">${esc(it.name)}</div><div class="ikcal">${R(it.kcal)}</div></div>`).join('')}
+      <div class="row2" style="margin-top:10px">
+        <div class="field" style="margin-bottom:6px"><label>קלוריות</label><input id="ed-kcal" type="number" value="${R(t.kcal)}"></div>
+        <div class="field" style="margin-bottom:6px"><label>חלבון</label><input id="ed-prot" type="number" value="${R(t.protein)}"></div>
+        <div class="field" style="margin-bottom:6px"><label>פחמימה</label><input id="ed-carb" type="number" value="${R(t.carbs)}"></div>
+        <div class="field" style="margin-bottom:6px"><label>שומן</label><input id="ed-fat" type="number" value="${R(t.fat)}"></div>
       </div>
-      <button class="btn" data-act="save-meal">✓ שמור ארוחה</button>
-    </div>`;
-  }catch(e){
-    box.innerHTML=`<div class="card"><div class="empty">לא הצלחנו לנתח כרגע 🙁<br><span style="font-size:12px">${esc(e.message||'')}</span></div>
-      <button class="btn ghost sm" data-act="analyze-meal" style="margin-top:10px">נסה שוב</button></div>`;
-  }
+      <button class="btn sm" data-act="ft-add">➕ הוסף לארוחה</button></div>`;
+  }catch(e){ box.innerHTML='<div class="empty">לא הצלחנו לנתח 🙁</div>'; }
 }
-function saveMeal(){
-  if(!lastMeal) return;
-  const log=todayLog();
-  log.meals.push({
-    time:new Date().toISOString(), mealType:currentMealType, description:lastMeal.text,
-    kcal:+document.getElementById('ed-kcal').value||0,
-    protein:+document.getElementById('ed-prot').value||0,
-    carbs:+document.getElementById('ed-carb').value||0,
-    fat:+document.getElementById('ed-fat').value||0,
-  });
-  saveLog(todayKey(),log); bumpStreak(); lastMeal=null;
-  toast('נשמר! 🦌'); nav('home');
+function ftAdd(){
+  const text=((document.getElementById('meal-text')||{}).value||'הערכה').trim();
+  mealItems.push({ name:text.slice(0,40), qty:'הערכה',
+    kcal:+document.getElementById('ed-kcal').value||0, protein:+document.getElementById('ed-prot').value||0,
+    carbs:+document.getElementById('ed-carb').value||0, fat:+document.getElementById('ed-fat').value||0 });
+  toast('נוסף לארוחה'); buildMealUI();
+}
+function saveMealCart(){
+  if(!mealItems.length){ toast('הוסף קודם מאכלים'); return; }
+  const tot=mealTotals(); const log=todayLog();
+  log.meals.push({ time:new Date().toISOString(), mealType:currentMealType,
+    description: mealItems.map(i=>`${i.name} (${i.qty})`).join(', '),
+    kcal:R(tot.kcal), protein:R(tot.protein), carbs:R(tot.carbs), fat:R(tot.fat), items:mealItems.slice() });
+  saveLog(todayKey(),log); bumpStreak(); mealItems=[];
+  toast('הארוחה נשמרה! 🦌'); nav('home');
 }
 
 /* ===================== מסך הוספת אימון ===================== */
@@ -1033,8 +1114,14 @@ document.addEventListener('click',e=>{
     case 'meal-type': currentMealType=a.dataset.val; document.querySelectorAll('#meal-types .chip').forEach(c=>c.classList.toggle('on',c===a)); break;
     case 'load-menu': { const p=getProfile(); const m=(p.menuPlan||[]).find(x=>x.meal===currentMealType)||(p.menuPlan||[])[0];
       if(m){ document.getElementById('meal-text').value=m.description; toast('נטען מהתפריט'); } else toast('אין תפריט מתאים'); break; }
+    case 'meal-mode': mealMode=a.dataset.val; buildMealUI(); break;
+    case 'food-quick': { const s=document.getElementById('food-search'); if(s){ s.value=a.dataset.val; renderFoodResults(s.value); s.focus(); } break; }
+    case 'food-pick': openPortion(a.dataset.i); break;
+    case 'portion-add': portionAdd(); break;
+    case 'ft-add': ftAdd(); break;
+    case 'item-del': mealItems.splice(+a.dataset.i,1); buildMealUI(); break;
     case 'analyze-meal': doAnalyzeMeal(); break;
-    case 'save-meal': saveMeal(); break;
+    case 'save-meal': saveMealCart(); break;
     case 'fill-act': document.getElementById('act-text').value=a.dataset.val; break;
     case 'analyze-act': doAnalyzeAct(); break;
     case 'save-act': saveAct(); break;
