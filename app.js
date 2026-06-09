@@ -2,9 +2,9 @@
 'use strict';
 
 /* ---------- אחסון ---------- */
-const KEYS = { profile:'bux_profile', logs:'bux_logs', weights:'bux_weights', streak:'bux_streak', chat:'bux_chat' };
+const KEYS = { profile:'bux_profile', logs:'bux_logs', weights:'bux_weights', streak:'bux_streak', chat:'bux_chat', meals:'bux_meals' };
 // פרופיל (יעדים) נכתב בנפרד (pushProfile) כדי שלא ידרוס שינויים של המאמן.
-const SYNC_KEYS = new Set([KEYS.logs, KEYS.weights, KEYS.streak]);
+const SYNC_KEYS = new Set([KEYS.logs, KEYS.weights, KEYS.streak, KEYS.meals]);
 let suppressSync = false;
 const store = {
   get(k, def){ try{ const v=localStorage.getItem(k); return v==null?def:JSON.parse(v); }catch(e){ return def; } },
@@ -35,7 +35,7 @@ function syncPush(){
   pushT=setTimeout(async()=>{
     // עדכון חלקי (PATCH) — רק הנתונים של המתאמן, בלי לגעת ב-profile (היעדים של המאמן)
     const patch={ logs:store.get(KEYS.logs,{}), weights:store.get(KEYS.weights,[]),
-      streak:store.get(KEYS.streak,{}), updatedAt:Date.now() };
+      streak:store.get(KEYS.streak,{}), meals:store.get(KEYS.meals,[]), updatedAt:Date.now() };
     const ok=await cloudPatch('users/'+USER.uid, patch);
     setSync(ok?'☁️ מסונכרן':'⚠️ לא מסונכרן');
   },700);
@@ -51,13 +51,14 @@ async function pullUser(uid){
   store.set(KEYS.logs, u.logs||{});
   store.set(KEYS.weights, u.weights||[]);
   store.set(KEYS.streak, u.streak||{current:0,longest:0,lastLogDate:null});
+  store.set(KEYS.meals, u.meals||[]);
   suppressSync=false;
 }
 function setUser(u){ USER=u; try{ localStorage.setItem('bux_user',JSON.stringify(u)); }catch(e){} }
 function logout(){
   USER=null;
   try{ localStorage.removeItem('bux_user'); }catch(e){}
-  [KEYS.profile,KEYS.logs,KEYS.weights,KEYS.streak,KEYS.chat].forEach(k=>localStorage.removeItem(k));
+  [KEYS.profile,KEYS.logs,KEYS.weights,KEYS.streak,KEYS.chat,KEYS.meals].forEach(k=>localStorage.removeItem(k));
   setCoach(false);
   nav('login');
 }
@@ -369,6 +370,49 @@ async function loadFoods(){
 function mealTotals(){ return mealItems.reduce((t,i)=>{t.kcal+=i.kcal;t.protein+=i.protein;t.carbs+=i.carbs;t.fat+=i.fat;return t;},{kcal:0,protein:0,carbs:0,fat:0}); }
 function foodById(id){ return FOODS && FOODS.find(f=>f.i===+id); }
 
+/* ---------- למידת ארוחות (ארוחות מהירות/אחרונות) ---------- */
+function getMeals(){ return store.get(KEYS.meals, []); }
+function mealSig(items){ return items.map(i=>`${i.name}|${i.grams||i.qty||''}`).sort().join('~'); }
+function mealScore(m){ const days=(Date.now()-(m.last||0))/864e5; return (m.count||1)*10 - days*0.4; }
+function rememberMeal(items, mealType){
+  const lib=getMeals(); const sig=mealSig(items);
+  const ex=lib.find(m=>m.sig===sig);
+  if(ex){ ex.count=(ex.count||1)+1; ex.last=Date.now(); ex.mealType=mealType; }
+  else {
+    const tot=items.reduce((s,i)=>s+(+i.kcal||0),0);
+    lib.push({ sig, items:items.slice(), mealType, count:1, last:Date.now(),
+      label: items.map(i=>{
+        let nm=i.name.split(',')[0].trim(); if(nm.length>16) nm=nm.slice(0,16)+'…';
+        const m=(i.qty||'').match(/^(\d+(?:\.\d+)?)\s+(.+)/);
+        const q=(m && !m[2].startsWith('ג'))? m[1]+'× ' : '';
+        return q+nm;
+      }).join(' + ').slice(0,90),
+      kcal: R(tot) });
+  }
+  lib.sort((a,b)=>mealScore(b)-mealScore(a));
+  store.set(KEYS.meals, lib.slice(0,40));
+}
+function topMeals(n){ return getMeals().slice().sort((a,b)=>mealScore(b)-mealScore(a)).slice(0,n||6); }
+function loadMeal(sig){
+  const m=getMeals().find(x=>x.sig===sig); if(!m) return;
+  if(m.mealType) currentMealType=m.mealType;
+  m.items.forEach(it=> mealItems.push({...it}));
+  toast('נטען! אפשר לשמור 🦌'); buildMealUI();
+  window.scrollTo(0,document.body.scrollHeight);
+}
+function forgetMeal(sig){ store.set(KEYS.meals, getMeals().filter(x=>x.sig!==sig)); buildMealUI(); }
+function frequentMealsHTML(){
+  const ms=topMeals(6); if(!ms.length) return '';
+  const mn={breakfast:'בוקר',lunch:'צהריים',dinner:'ערב',snack:'ביניים'};
+  return `<div class="card"><h3>🔁 הארוחות שלך — בחירה מהירה</h3>
+    ${ms.map(m=>`<div class="list-item" data-act="meal-load" data-sig="${esc(m.sig)}" style="cursor:pointer">
+      <div style="flex:1"><div class="li-main" style="font-size:14px">${esc(m.label)}</div>
+        <div class="li-sub">${mn[m.mealType]||''} · נאכל ${m.count}×</div></div>
+      <div style="display:flex;align-items:center;gap:8px"><span class="li-k">${R(m.kcal)}</span>
+        <button class="li-del" data-act="meal-forget" data-sig="${esc(m.sig)}">🗑</button></div></div>`).join('')}
+    <div class="hint" style="margin-top:8px">לחיצה טוענת את כל הארוחה — ואז רק לשמור 🦌</div></div>`;
+}
+
 async function renderMeal(){
   const h=new Date().getHours();
   currentMealType = h<11?'breakfast': h<16?'lunch': h<21?'dinner':'snack';
@@ -381,6 +425,7 @@ async function renderMeal(){
 function buildMealUI(){
   const tot=mealTotals();
   document.getElementById('meal-body').innerHTML=`
+    ${frequentMealsHTML()}
     <div class="card">
       <div class="field"><label>איזו ארוחה?</label>
         <div class="chips" id="meal-types">${MEAL_TYPES.map(([v,l])=>`<button class="chip ${v===currentMealType?'on':''}" data-act="meal-type" data-val="${v}">${l}</button>`).join('')}</div>
@@ -445,12 +490,13 @@ function renderFoodResults(q){
 
 function openPortion(id){
   const f=foodById(id); if(!f) return; portionFood=f;
+  const hasUnit=f.u&&Object.keys(f.u).length;
   const units=[['גרם',1],...Object.entries(f.u||{})];
-  const defIdx=(f.u&&Object.keys(f.u).length)?1:0;
+  const defIdx=hasUnit?1:0;
   showModal(`<h2 style="font-size:19px;line-height:1.3">${esc(f.n)}</h2>
     <p style="font-size:13px">בחר כמות — חישוב מהמאגר הרשמי 🦌</p>
     <div class="row2" style="text-align:right">
-      <div class="field"><label>כמות</label><input id="pt-amt" type="number" step="0.25" value="1" inputmode="decimal"></div>
+      <div class="field"><label>כמות</label><input id="pt-amt" type="number" step="${hasUnit?'0.25':'10'}" value="${hasUnit?1:100}" inputmode="decimal"></div>
       <div class="field"><label>יחידה</label><select id="pt-unit">${units.map(([u,g],i)=>`<option value="${g}" ${i===defIdx?'selected':''}>${esc(u)}${g!==1?` (${R(g)} ג')`:''}</option>`).join('')}</select></div>
     </div>
     <div class="total-line" style="margin:4px 0 14px"><div class="li-main">קלוריות</div><div class="tk" id="pt-kcal">0</div></div>
@@ -503,6 +549,7 @@ function saveMealCart(){
   log.meals.push({ time:new Date().toISOString(), mealType:currentMealType,
     description: mealItems.map(i=>`${i.name} (${i.qty})`).join(', '),
     kcal:R(tot.kcal), protein:R(tot.protein), carbs:R(tot.carbs), fat:R(tot.fat), items:mealItems.slice() });
+  rememberMeal(mealItems, currentMealType);
   saveLog(todayKey(),log); bumpStreak(); mealItems=[];
   toast('הארוחה נשמרה! 🦌'); nav('home');
 }
@@ -1120,6 +1167,8 @@ document.addEventListener('click',e=>{
     case 'portion-add': portionAdd(); break;
     case 'ft-add': ftAdd(); break;
     case 'item-del': mealItems.splice(+a.dataset.i,1); buildMealUI(); break;
+    case 'meal-load': loadMeal(a.dataset.sig); break;
+    case 'meal-forget': forgetMeal(a.dataset.sig); break;
     case 'analyze-meal': doAnalyzeMeal(); break;
     case 'save-meal': saveMealCart(); break;
     case 'fill-act': document.getElementById('act-text').value=a.dataset.val; break;
