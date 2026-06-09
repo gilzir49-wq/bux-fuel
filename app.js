@@ -442,9 +442,9 @@ function buildMealUI(){
         <div class="chips" style="margin-bottom:6px">${['ביצה','לחם','אורז','חזה עוף',"קוטג'",'בננה','סלט','חלב'].map(s=>`<button class="chip" data-act="food-quick" data-val="${esc(s)}">${s}</button>`).join('')}</div>
         <div id="food-results"></div>`
       :`
-        <div class="field"><textarea id="meal-text" placeholder="תאר בחופשיות: חזה עוף 200 גרם, צלחת אורז, סלט"></textarea>
-          <div class="hint">הערכה מהירה (לא מהמאגר הרשמי) — לדיוק מלא העדף חיפוש.</div></div>
-        <button class="btn ghost sm" data-act="analyze-meal">🦌 נתח טקסט</button>
+        <div class="field"><textarea id="meal-text" placeholder="כתוב משפט: פיתה, 3 פרוסות גבינה צהובה, חצי גביע קוטג' ו-3 עגבניות שרי"></textarea>
+          <div class="hint">🦌 כתוב כמו שבא לך — נזהה את המאכלים ונחבר למספרים האמיתיים מהמאגר.</div></div>
+        <button class="btn ghost sm" data-act="analyze-meal">🔎 זהה מהמאגר</button>
         <div id="ft-result"></div>`}
     </div>
     <div class="card">
@@ -462,17 +462,25 @@ function buildMealUI(){
 }
 
 const PROCESSED_RE=/מיובש|אבקת|אבקה|מסוכר|מטוגן|קלוי|משומר|תרכיז|תמצית|מיוחד|לתינוק|פורמולה/;
+const STOP_WORDS=new Set(['אחוז','שומן','עם','של','ה','עץ',
+  'כוס','כוסות','כף','כפות','כפית','כפיות','פרוסה','פרוסות','יחידה','יחידות','גביע','צלחת','קערית','חופן','מנה','ספל','כדור']);
 function searchFoods(q){
   q=(q||'').trim(); if(q.length<2||!FOODS) return [];
-  const words=q.split(/\s+/); const w0=words[0]; const res=[];
+  const words=q.split(/\s+/).filter(w=>w.length>1 && !STOP_WORDS.has(w) && !/^\d/.test(w));
+  if(!words.length) return [];
+  const w0=words[0];
+  const w0c=[w0];                                  // תמיכה ברבים: ביצים→ביצה, עגבניות→עגבניה
+  if(/ים$/.test(w0)&&w0.length>3) w0c.push(w0.slice(0,-2)+'ה', w0.slice(0,-2));
+  if(/ות$/.test(w0)&&w0.length>3) w0c.push(w0.slice(0,-2)+'ה', w0.slice(0,-2));
+  const res=[];
   for(const f of FOODS){
     const n=f.n;
-    if(!words.every(w=>n.includes(w))) continue;
-    let s;
-    if(n===q) s=1000;
-    else if(n.startsWith(q)) s=700-n.length*0.3;
-    else { const toks=n.split(/[ ,]+/); s=(toks.some(t=>t.startsWith(w0))?450:200)-n.length*0.3; }
-    if(PROCESSED_RE.test(n)) s-=130;   // העדף מאכלים בסיסיים על פני מעובדים
+    const hit=w0c.find(c=>n.includes(c)); if(!hit) continue;   // מילת המאכל (או יחיד שלה) חייבת להופיע
+    let matched=words.filter(w=>n.includes(w)).length || 1;     // לפחות 1 על התאמת היחיד
+    let s=matched*120;
+    if(n===q) s+=1000; else if(n.startsWith(hit)) s+=400;
+    s-=n.length*0.3;
+    if(PROCESSED_RE.test(n)) s-=130;              // העדף מאכלים בסיסיים על מעובדים
     res.push([s,f]);
   }
   res.sort((a,b)=>b[0]-a[0]);
@@ -518,30 +526,64 @@ function portionAdd(){
   portionFood=null; closeModal(); buildMealUI();
 }
 
+/* ---------- זיהוי טקסט חופשי → חיבור למאגר הרשמי ---------- */
+const UNIT_SYN={'פרוסה':'פרוסה','פרוסות':'פרוסה','פרוסת':'פרוסה','כף':'כף','כפות':'כף','כפית':'כפית','כפיות':'כפית',
+ 'כוס':'כוס','כוסות':'כוס','כוסית':'כוסית','יחידה':'יחידה','יחידות':'יחידה','יח':'יחידה','גביע':'גביע','גביעים':'גביע',
+ 'צלחת':'צלחת בינונית','צלחות':'צלחת בינונית','קערית':'קערית מרק','קערה':'קערית מרק','חופן':'חופן','כדור':'כדור','כדורים':'כדור','ספל':'ספל'};
+const NUM_WORDS={'חצי':0.5,'רבע':0.25,'שלושת רבעי':0.75,'אחד':1,'אחת':1,'שתי':2,'שני':2,'שניים':2,'שתיים':2,'שלוש':3,'שלושה':3,'ארבע':4,'ארבעה':4,'חמש':5,'חמישה':5,'שש':6,'שישה':6,'שבע':7,'שמונה':8};
+function localParse(text){
+  const segs=String(text||'').split(/[,،\n]|\s+ו-?(?=[א-ת0-9])|\s*\+\s*|\sעם\s/).map(s=>s.trim()).filter(s=>s.length>1);
+  return segs.map(seg=>{
+    let amount=null, unit=null, grams=null, s=' '+seg+' ';
+    let m=s.match(/(\d+(?:\.\d+)?)\s*(?:גרם|ג"ר|גר|ג'|gr|g)(?![א-ת])/i); if(m){ grams=+m[1]; s=s.replace(m[0],' '); }
+    if(grams==null){ m=s.match(/(\d+(?:\.\d+)?)\s*(?:מ"ל|מל|ml)(?![א-ת])/i); if(m){ grams=+m[1]; s=s.replace(m[0],' '); } }
+    if(grams==null){ m=s.match(/(\d+(?:\.\d+)?)/); if(m){ amount=+m[1]; s=s.replace(m[0],' '); } }
+    if(amount==null && grams==null){ for(const w in NUM_WORDS){ if(s.includes(w)){ amount=NUM_WORDS[w]; s=s.replace(w,' '); break; } } }
+    for(const w in UNIT_SYN){ const re=new RegExp('(^|\\s)'+w+'(\\s|$)'); if(re.test(s)){ unit=UNIT_SYN[w]; s=s.replace(re,' '); break; } }
+    return { raw:seg, q:s.replace(/\s+/g,' ').trim(), amount:amount==null?1:amount, unit, grams };
+  }).filter(p=>p.q.length>1);
+}
+async function parseMeal(text){
+  const base=workerBase();
+  if(base){ try{ const r=await aiPost('/parse-meal',{text}); if(r&&Array.isArray(r.items)&&r.items.length) return r.items; }catch(e){} }
+  return localParse(text);
+}
+function groundItem(p){
+  const f=searchFoods(p.q)[0]; if(!f) return null;
+  let grams, usedUnit=null;
+  if(p.grams!=null){ grams=p.grams; }
+  else if(p.unit && f.u){ const k=f.u[p.unit]?p.unit:Object.keys(f.u).find(u=>u.includes(p.unit)||p.unit.includes(u));
+    if(k){ grams=p.amount*f.u[k]; usedUnit=k; } else grams=p.amount*100; }
+  else if(f.u && Object.keys(f.u).length){ const k=Object.keys(f.u)[0]; grams=p.amount*f.u[k]; usedUnit=k; }
+  else grams=(p.amount||1)*100;
+  const fac=grams/100;
+  return { name:f.n, qty: usedUnit?`${p.amount} ${usedUnit}`:`${R(grams)} ג'`,
+    grams:R(grams), kcal:R(f.k*fac), protein:R(f.p*fac), carbs:R(f.c*fac), fat:R(f.f*fac), foodId:f.i };
+}
+let ftMatched=[];
 async function doAnalyzeMeal(){
   const text=(document.getElementById('meal-text').value||'').trim();
   if(!text){ toast('כתוב קודם מה אכלת'); return; }
   const box=document.getElementById('ft-result');
-  box.innerHTML=`<div class="loading" style="padding:16px"><div class="spinner"></div><div>מחשב... 🦌</div></div>`;
-  try{
-    const r=await analyzeMeal(text); const t=r.total||{kcal:0,protein:0,carbs:0,fat:0};
-    box.innerHTML=`<div class="analyze-result" style="margin-top:10px">
-      ${(r.items||[]).map(it=>`<div class="item-line"><div class="iname">${esc(it.name)}</div><div class="ikcal">${R(it.kcal)}</div></div>`).join('')}
-      <div class="row2" style="margin-top:10px">
-        <div class="field" style="margin-bottom:6px"><label>קלוריות</label><input id="ed-kcal" type="number" value="${R(t.kcal)}"></div>
-        <div class="field" style="margin-bottom:6px"><label>חלבון</label><input id="ed-prot" type="number" value="${R(t.protein)}"></div>
-        <div class="field" style="margin-bottom:6px"><label>פחמימה</label><input id="ed-carb" type="number" value="${R(t.carbs)}"></div>
-        <div class="field" style="margin-bottom:6px"><label>שומן</label><input id="ed-fat" type="number" value="${R(t.fat)}"></div>
-      </div>
-      <button class="btn sm" data-act="ft-add">➕ הוסף לארוחה</button></div>`;
-  }catch(e){ box.innerHTML='<div class="empty">לא הצלחנו לנתח 🙁</div>'; }
+  box.innerHTML=`<div class="loading" style="padding:16px"><div class="spinner"></div><div>מזהה מהמאגר... 🦌</div></div>`;
+  let parsed; try{ parsed=await parseMeal(text); }catch(e){ parsed=localParse(text); }
+  ftMatched=parsed.map(groundItem).filter(Boolean);
+  renderFtMatched();
 }
-function ftAdd(){
-  const text=((document.getElementById('meal-text')||{}).value||'הערכה').trim();
-  mealItems.push({ name:text.slice(0,40), qty:'הערכה',
-    kcal:+document.getElementById('ed-kcal').value||0, protein:+document.getElementById('ed-prot').value||0,
-    carbs:+document.getElementById('ed-carb').value||0, fat:+document.getElementById('ed-fat').value||0 });
-  toast('נוסף לארוחה'); buildMealUI();
+function renderFtMatched(){
+  const box=document.getElementById('ft-result'); if(!box) return;
+  if(!ftMatched.length){ box.innerHTML='<div class="empty" style="padding:14px">לא זוהו מאכלים — נסה לנסח אחרת או חפש ידנית 🔍</div>'; return; }
+  box.innerHTML=`<div style="margin-top:10px"><div class="section-title" style="margin:0 0 6px">✅ זוהה מהמאגר הרשמי</div>
+    ${ftMatched.map((it,i)=>`<div class="list-item">
+      <div style="flex:1"><div class="li-main" style="font-size:14px">${esc(it.name)}</div><div class="li-sub">${esc(it.qty)} · ח ${R(it.protein)} פ ${R(it.carbs)} ש ${R(it.fat)}</div></div>
+      <div style="display:flex;align-items:center;gap:8px"><span class="li-k">${R(it.kcal)}</span><button class="li-del" data-act="ftm-del" data-i="${i}">🗑</button></div></div>`).join('')}
+    <button class="btn" data-act="ft-addall" style="margin-top:12px">➕ הוסף הכל לארוחה</button>
+    <div class="hint" style="text-align:center;margin-top:6px">לא מדויק? מחק פריט והוסף אותו בחיפוש 🔍</div></div>`;
+}
+function ftAddAll(){
+  if(!ftMatched.length) return;
+  ftMatched.forEach(it=> mealItems.push({name:it.name,qty:it.qty,grams:it.grams,kcal:it.kcal,protein:it.protein,carbs:it.carbs,fat:it.fat}));
+  ftMatched=[]; toast('נוסף לארוחה! 🦌'); buildMealUI();
 }
 function saveMealCart(){
   if(!mealItems.length){ toast('הוסף קודם מאכלים'); return; }
@@ -1165,7 +1207,8 @@ document.addEventListener('click',e=>{
     case 'food-quick': { const s=document.getElementById('food-search'); if(s){ s.value=a.dataset.val; renderFoodResults(s.value); s.focus(); } break; }
     case 'food-pick': openPortion(a.dataset.i); break;
     case 'portion-add': portionAdd(); break;
-    case 'ft-add': ftAdd(); break;
+    case 'ft-addall': ftAddAll(); break;
+    case 'ftm-del': ftMatched.splice(+a.dataset.i,1); renderFtMatched(); break;
     case 'item-del': mealItems.splice(+a.dataset.i,1); buildMealUI(); break;
     case 'meal-load': loadMeal(a.dataset.sig); break;
     case 'meal-forget': forgetMeal(a.dataset.sig); break;

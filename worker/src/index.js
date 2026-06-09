@@ -73,6 +73,11 @@ const SYS_MEAL = `את/ה מומחה/ית תזונה ישראלי/ת. נתח/י 
  "note":"משפט קצר אחד בעברית"}
 אל תוסיף/י שום טקסט מחוץ ל-JSON.`;
 
+const SYS_PARSE = `את/ה מנוע שמחלץ מאכלים מתיאור ארוחה בעברית, כדי לחבר אותם למאגר מזון.
+לכל מאכל החזר/י: q = שם המאכל בעברית בצורה פשוטה ובסיסית כפי שמופיע במאגר מזון (למשל "לחם לבן", "חזה עוף", "גבינה צהובה", "קוטג'"); amount = כמות מספרית (ברירת מחדל 1); unit = יחידת מידה בעברית (פרוסה/כף/כפית/כוס/יחידה/גביע/צלחת/קערית) או null אם צוין משקל; grams = משקל בגרמים אם צוין במפורש, אחרת null.
+החזר/י JSON בלבד: {"items":[{"q":"...","amount":1,"unit":"פרוסה","grams":null}]}
+אל תוסיף/י טקסט מחוץ ל-JSON ואל תמציא/י ערכים תזונתיים — רק זיהוי המאכל והכמות.`;
+
 const SYS_ACTIVITY = `את/ה מומחה/ית לפיזיולוגיה של המאמץ. הערך/י כמה קלוריות נשרפו לפי סוג הפעילות, משך, עצימות ומשקל המתאמן, בשיטת MET.
 זהה/י פעילויות ישראליות נפוצות (הליכה, ריצה, קרוספיט, מטקות, שחייה, אופניים). החזר/י JSON בלבד:
 {"activity":"...","minutes":0,"kcalBurned":0,"note":"משפט קצר בעברית"}
@@ -107,6 +112,14 @@ export default {
     try { body = await request.json(); } catch { /* empty */ }
 
     try {
+      if (path.endsWith('/parse-meal')) {
+        const text = String(body.text || '').slice(0, 1500);
+        const out = await callClaude(env, SYS_PARSE, `הארוחה: ${text}`, 700);
+        const parsed = parseModelJson(out);
+        if (!parsed) return json({ error: 'parse', raw: out }, env, origin, 502);
+        return json(parsed, env, origin);
+      }
+
       if (path.endsWith('/analyze-meal')) {
         const text = String(body.text || '').slice(0, 1500);
         const out = await callClaude(env, SYS_MEAL, `הארוחה: ${text}`, 800);
