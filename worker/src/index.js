@@ -92,6 +92,12 @@ const SYS_PARSE = `את/ה מנוע שמחלץ מאכלים מתיאור ארו�
 החזר/י JSON בלבד: {"items":[{"q":"...","amount":1,"unit":"פרוסה","grams":null}]}
 אל תוסיף/י טקסט מחוץ ל-JSON ואל תמציא/י ערכים תזונתיים — רק זיהוי המאכל והכמות.`;
 
+const SYS_PHOTO = `את/ה מזהה מאכלים מתמונת ארוחה, כדי לחבר אותם למאגר מזון רשמי.
+התבונן/י בתמונה וזהה/י כל מאכל שנראה בה. אם יש הקשר על המתאמן/ת (JSON) — השתמש/י בו רק כדי להעריך כמות סבירה.
+לכל מאכל החזר/י: q = שם פשוט בעברית כמו במאגר מזון; amount = כמות (ברירת מחדל 1); unit = יחידת מידה בעברית (פרוסה/כף/כוס/יחידה/צלחת/גביע) או null; grams = משקל משוער בגרמים אם אפשר להעריך מהתמונה, אחרת null.
+החזר/י JSON בלבד: {"items":[{"q":"...","amount":1,"unit":null,"grams":null}]}
+אל תמציא/י ערכים תזונתיים — רק זיהוי המאכל והכמות מהתמונה.`;
+
 const SYS_ACTIVITY = `את/ה מומחה/ית לפיזיולוגיה של המאמץ. הערך/י כמה קלוריות נשרפו לפי סוג הפעילות, משך, עצימות ומשקל המתאמן, בשיטת MET.
 זהה/י פעילויות ישראליות נפוצות (הליכה, ריצה, קרוספיט, מטקות, שחייה, אופניים). החזר/י JSON בלבד:
 {"activity":"...","minutes":0,"kcalBurned":0,"note":"משפט קצר בעברית"}
@@ -126,6 +132,23 @@ export default {
     try { body = await request.json(); } catch { /* empty */ }
 
     try {
+      if (path.endsWith('/photo-meal')) {
+        const image = String(body.image || '');
+        const media = String(body.media_type || 'image/jpeg');
+        if (!image) return json({ error: 'no image' }, env, origin, 400);
+        const messages = [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: media, data: image } },
+            { type: 'text', text: ctxPreamble(body.context) + 'זהה את כל המאכלים והכמויות בתמונת הארוחה והחזר JSON של items.' },
+          ],
+        }];
+        const out = await callClaude(env, SYS_PHOTO, messages, 800);
+        const parsed = parseModelJson(out);
+        if (!parsed) return json({ error: 'parse', raw: out }, env, origin, 502);
+        return json(parsed, env, origin);
+      }
+
       if (path.endsWith('/parse-meal')) {
         const text = String(body.text || '').slice(0, 1500);
         const out = await callClaude(env, SYS_PARSE, ctxPreamble(body.context) + `הארוחה: ${text}`, 700);

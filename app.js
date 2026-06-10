@@ -471,7 +471,9 @@ function buildMealUI(){
           <input id="food-search" placeholder="חפש מאכל… לחם, חזה עוף, קוטג'" autocomplete="off">
           <div class="hint">📋 נתוני משרד הבריאות — קלוריות ומאקרו אמיתיים ל-100 גרם.</div>
         </div>
-        <div class="chips" style="margin-bottom:6px">${['ביצה','לחם','אורז','חזה עוף',"קוטג'",'בננה','סלט','חלב'].map(s=>`<button class="chip" data-act="food-quick" data-val="${esc(s)}">${s}</button>`).join('')}</div>
+        <div class="chips" style="margin-bottom:8px">${['ביצה','לחם','אורז','חזה עוף',"קוטג'",'בננה','סלט','במבה'].map(s=>`<button class="chip" data-act="food-quick" data-val="${esc(s)}">${s}</button>`).join('')}</div>
+        <button class="btn ghost sm" data-act="photo-meal" style="margin-bottom:10px;width:100%">📷 צלם את הארוחה</button>
+        <input type="file" id="meal-photo" accept="image/*" capture="environment" hidden>
         <div id="food-results"></div>`
       :`
         <div class="field"><textarea id="meal-text" placeholder="כתוב משפט: פיתה, 3 פרוסות גבינה צהובה, חצי גביע קוטג' ו-3 עגבניות שרי"></textarea>
@@ -491,6 +493,7 @@ function buildMealUI(){
     </div>`;
   const s=document.getElementById('food-search');
   if(s){ s.addEventListener('input',()=>renderFoodResults(s.value)); s.focus(); }
+  const ph=document.getElementById('meal-photo'); if(ph) ph.addEventListener('change',onPhotoSelected);
 }
 
 const PROCESSED_RE=/מיובש|אבקת|אבקה|מסוכר|מטוגן|קלוי|משומר|תרכיז|תמצית|מיוחד|לתינוק|פורמולה/;
@@ -602,8 +605,8 @@ async function doAnalyzeMeal(){
   ftMatched=parsed.map(groundItem).filter(Boolean);
   renderFtMatched();
 }
-function renderFtMatched(){
-  const box=document.getElementById('ft-result'); if(!box) return;
+function renderFtMatched(boxId){
+  const box=document.getElementById(boxId||'ft-result'); if(!box) return;
   if(!ftMatched.length){ box.innerHTML='<div class="empty" style="padding:14px">לא זוהו מאכלים — נסה לנסח אחרת או חפש ידנית 🔍</div>'; return; }
   box.innerHTML=`<div style="margin-top:10px"><div class="section-title" style="margin:0 0 6px">✅ זוהה מהמאגר הרשמי</div>
     ${ftMatched.map((it,i)=>`<div class="list-item">
@@ -616,6 +619,37 @@ function ftAddAll(){
   if(!ftMatched.length) return;
   ftMatched.forEach(it=> mealItems.push({name:it.name,qty:it.qty,grams:it.grams,kcal:it.kcal,protein:it.protein,carbs:it.carbs,fat:it.fat}));
   ftMatched=[]; toast('נוסף לארוחה! 🦌'); buildMealUI();
+}
+
+/* ---------- צילום ארוחה → זיהוי (Claude Vision) → חיבור למאגר ---------- */
+function onPhotoSelected(e){
+  const file=e.target.files&&e.target.files[0]; e.target.value=''; if(!file) return;
+  const url=URL.createObjectURL(file); const img=new Image();
+  img.onload=()=>{ URL.revokeObjectURL(url);
+    const max=1024; let w=img.width, h=img.height; const sc=Math.min(1, max/Math.max(w,h));
+    w=Math.round(w*sc); h=Math.round(h*sc);
+    const c=document.createElement('canvas'); c.width=w; c.height=h;
+    c.getContext('2d').drawImage(img,0,0,w,h);
+    analyzePhoto(c.toDataURL('image/jpeg',0.8).split(',')[1], 'image/jpeg');
+  };
+  img.onerror=()=>{ URL.revokeObjectURL(url); toast('לא הצלחנו לקרוא את התמונה'); };
+  img.src=url;
+}
+async function analyzePhoto(b64, media){
+  const box=document.getElementById('food-results')||document.getElementById('ft-result');
+  if(!workerBase()){
+    showModal(`<h2>📷 צילום ארוחה</h2>
+      <p>זיהוי ארוחה מתמונה עובד דרך מנוע ה-AI (Claude Vision). זו התכונה היחידה שדורשת חיבור AI — אחרי שמחברים אותה, פשוט מצלמים והכל נרשם אוטומטית.<br><br>בינתיים אפשר לרשום מהיר בחיפוש או בטקסט חופשי 🦌</p>
+      <button class="btn" data-act="close-modal">הבנתי</button>`);
+    return;
+  }
+  if(box) box.innerHTML=`<div class="loading" style="padding:16px"><div class="spinner"></div><div>מזהה מהתמונה... 🦌</div></div>`;
+  try{
+    const r=await aiPost('/photo-meal',{image:b64, media_type:media, context:buildMealContext()});
+    const items=(r&&Array.isArray(r.items))?r.items:[];
+    ftMatched=items.map(groundItem).filter(Boolean);
+    renderFtMatched(box?box.id:'ft-result');
+  }catch(e){ if(box) box.innerHTML=`<div class="empty" style="padding:14px">לא הצלחנו לזהות מהתמונה 🙁<br><span style="font-size:12px">${esc(e.message||'')}</span></div>`; }
 }
 function saveMealCart(){
   if(!mealItems.length){ toast('הוסף קודם מאכלים'); return; }
@@ -1338,42 +1372,67 @@ function computeTargets(d){
   const carbs=Math.max(40, Math.round((cal-protein*4-fat*9)/4));
   return {bmr:Math.round(bmr), tdee:Math.round(tdee), calories:cal, protein, carbs, fat, method, weeks, plan, lean};
 }
-// מאגרי בחירה — שאילתות נקיות שמתאימות לרשומות אמיתיות במאגר משרד הבריאות
-const PROT_BY_MEAL={
-  breakfast:[["ביצה קשה שלמה","ביצה קשה"],["גבינת קוטג' 5%","קוטג'"],["יוגורט 3% שומן תנובה","יוגורט 3"],["גבינה לבנה 5% שומן, תנובה","גבינה לבנה 5"]],
-  lunch:[["בשר עוף, חזה אפוי בשמן זית","חזה עוף אפוי"],["דג סלמון אפוי ללא","סלמון אפוי"],["דג טונה, מבושל במים","טונה מבושל"]],
-  snack:[["יוגורט 3% שומן תנובה","יוגורט 3"],["גבינת קוטג' 5%","קוטג'"],["גבינה לבנה 5% שומן, תנובה","גבינה לבנה 5"]],
-  dinner:[["בשר עוף, חזה אפוי בשמן זית","חזה עוף אפוי"],["דג טונה, משומר במים","טונה במים"],["דג סלמון אפוי ללא","סלמון אפוי"]]
-};
-const PROT_VEG=[["עדשים, מונבטים מבושלים","עדשים מבושל"],["גבינת קוטג' 5%","קוטג'"],["טופו מטוגן","טופו"],["חומוס, ביתי","חומוס"]];
-const PROT_VEGAN=[["עדשים, מונבטים מבושלים","עדשים מבושל"],["טופו מטוגן","טופו"],["חומוס, ביתי","חומוס"],["שעועית לבנה מבושלת","שעועית"]];
-const CARB_BY_MEAL={
-  breakfast:[["דייסת שיבולת שועל","שיבולת שועל"],["לחם מחיטה מלאה, קלוי","לחם מלא"]],
-  lunch:[["אורז לבן מבושל עם שמן סויה","אורז מבושל"],["בטטה","בטטה"]],
-  snack:[["בננה, טריה","בננה"],["לחם מחיטה מלאה, קלוי","לחם מלא"]],
-  dinner:[["בטטה","בטטה"],["אורז לבן מבושל עם שמן סויה","אורז מבושל"]]
-};
-const VEG_BY=[["סלט ירקות עם שמן זית","סלט ירקות"],["ברוקולי, טרי","ברוקולי"]];
 function pickFood(pair){ for(const q of pair){ const f=searchFoods(q)[0]; if(f) return f; } return null; }
 function mkItem(f,grams){ const fac=grams/100; return {name:f.n, grams:R(grams), kcal:R(f.k*fac), protein:R(f.p*fac), carbs:R(f.c*fac), fat:R(f.f*fac)}; }
 function clampG(g,lo,hi){ return Math.max(lo,Math.min(hi,Math.round(g/5)*5)); }
+const PROT_VEG=[["עדשים, מונבטים מבושלים","עדשים מבושל"],["גבינת קוטג' 5%","קוטג'"],["טופו מטוגן","טופו"],["חומוס, ביתי","חומוס"]];
+const PROT_VEGAN=[["עדשים, מונבטים מבושלים","עדשים מבושל"],["טופו מטוגן","טופו"],["חומוס, ביתי","חומוס"],["שעועית לבנה מבושלת","שעועית"]];
+// שאילתות עזר נקיות
+const Q={ bread:["לחם מחיטה מלאה, קלוי","לחם מלא"], rice:["אורז לבן מבושל עם שמן סויה","אורז מבושל"],
+  sweet:["בטטה","בטטה"], potato:["תפוח אדמה","תפוח אדמה"], oats:["דייסת שיבולת שועל","שיבולת שועל"],
+  quinoa:["קינואה מבושלת","קינואה"], salad:["סלט ירקות עם שמן זית","סלט ירקות"], broccoli:["ברוקולי, טרי","ברוקולי"],
+  tomato:["עגבניה, טריה","עגבניה"], cucumber:["מלפפון, טרי","מלפפון"], tahini:["טחינה גולמית","טחינה"],
+  almond:["שקדים קלויים","שקד"], avocado:["אבוקדו","אבוקדו"], banana:["בננה, טריה","בננה"],
+  granola:["דגני בוקר, גרנולה","גרנולה"], egg:["ביצה קשה שלמה","ביצה"], cottage:["גבינת קוטג' 5%","קוטג'"],
+  yogurt:["יוגורט 3% שומן תנובה","יוגורט 3"], whiteCheese:["גבינה לבנה 5% שומן, תנובה","גבינה לבנה 5"],
+  chicken:["בשר עוף, חזה אפוי בשמן זית","חזה עוף אפוי"], salmon:["דג סלמון אפוי ללא","סלמון אפוי"],
+  tuna:["דג טונה, משומר במים","טונה במים"], beef:["קציצות בקר, אפויות","קציצות בקר"], olives:["זיתים","זית"] };
+// תבניות ארוחות אמיתיות (P=חלבון מותאם ליעד, C=פחמימה ממלאת, מספר=גרם קבוע)
+const TPL={
+  breakfast:[
+    [['P',Q.egg],['C',Q.bread],[Q.salad,120],[Q.tahini,15]],                         // שקשוקה עם לחם וסלט
+    [['P',Q.yogurt],['C',Q.granola],[Q.banana,100],[Q.almond,20]],                    // יוגורט גרנולה ופרי
+    [['P',Q.cottage],['C',Q.bread],[Q.tomato,90],[Q.cucumber,90],[Q.avocado,50]],     // קוטג' לחם וירקות
+    [['P',Q.egg],['C',Q.oats],[Q.whiteCheese,60],[Q.salad,100]]                       // חביתה, שיבולת שועל וגבינה
+  ],
+  lunch:[
+    [['P',Q.chicken],['C',Q.rice],[Q.broccoli,120],[Q.salad,100],[Q.tahini,15]],      // עוף, אורז, ירקות וטחינה
+    [['P',Q.salmon],['C',Q.sweet],[Q.broccoli,120],[Q.salad,100]],                    // סלמון, בטטה וברוקולי
+    [['P',Q.beef],['C',Q.potato],[Q.salad,120],[Q.avocado,40]],                       // קציצות, תפו"א וסלט
+    [['P',Q.chicken],['C',Q.quinoa],[Q.broccoli,120],[Q.salad,100]]                   // עוף, קינואה וירקות
+  ],
+  dinner:[
+    [['P',Q.chicken],['C',Q.sweet],[Q.broccoli,120],[Q.salad,120]],                   // עוף בגריל ובטטה
+    [['P',Q.tuna],['C',Q.bread],[Q.egg,50],[Q.salad,150],[Q.tahini,15]],              // טונה, ביצה וסלט גדול
+    [['P',Q.egg],['C',Q.bread],[Q.whiteCheese,60],[Q.salad,150],[Q.olives,20]]        // אומלט, גבינה וסלט גדול
+  ],
+  snack:[
+    [['P',Q.yogurt],[Q.banana,100],[Q.almond,20]],                                    // יוגורט, פרי ושקדים
+    [['P',Q.cottage],['C',Q.bread],[Q.tomato,80]],                                    // קוטג' ולחם
+    [['P',Q.whiteCheese],[Q.banana,120],[Q.almond,15]]                                // גבינה לבנה ופרי
+  ]
+};
+let planVariant=0;
 function generateDayMenu(T,intake){
   const dist={3:[['breakfast','בוקר',0.30],['lunch','צהריים',0.40],['dinner','ערב',0.30]],
     4:[['breakfast','בוקר',0.25],['lunch','צהריים',0.35],['snack','ביניים',0.15],['dinner','ערב',0.25]],
     5:[['breakfast','בוקר',0.22],['snack','ביניים',0.12],['lunch','צהריים',0.30],['snack','ביניים',0.12],['dinner','ערב',0.24]]}[intake.mealsCount||4];
-  const vegMode=intake.dietStyle==='vegan'?PROT_VEGAN:(intake.dietStyle==='vegetarian'?PROT_VEG:null);
-  return dist.map((m,i)=>{
+  const vegList=intake.dietStyle==='vegan'?PROT_VEGAN:(intake.dietStyle==='vegetarian'?PROT_VEG:null);
+  return dist.map((m,idx)=>{
     const [key,label,pct]=m;
     const mealCal=T.calories*pct, mealProt=T.protein*pct;
-    const items=[];
-    const protList=vegMode||PROT_BY_MEAL[key];
-    const pf=pickFood(protList[i%protList.length]);
-    if(pf) items.push(mkItem(pf, clampG(mealProt*100/(pf.p||15),40,220)));
-    let used=items.reduce((s,x)=>s+x.kcal,0);
-    const carbList=CARB_BY_MEAL[key]||CARB_BY_MEAL.lunch;
-    const cf=pickFood(carbList[i%carbList.length]);
-    if(cf){ const g=clampG(Math.max(0,mealCal-used)*0.92*100/(cf.k||100),0,400); if(g>=20){ items.push(mkItem(cf,g)); used+=R(cf.k*g/100); } }
-    if(key==='lunch'||key==='dinner'){ const vf=pickFood(VEG_BY[i%VEG_BY.length]); if(vf) items.push(mkItem(vf,150)); }
+    const pool=TPL[key]||TPL.lunch;
+    const tpl=pool[(idx+planVariant)%pool.length];
+    const resolved=[]; let nonCarb=0; let carbIdx=-1;
+    tpl.forEach(c=>{
+      if(c[0]==='C'){ resolved.push({food:pickFood(c[1])}); carbIdx=resolved.length-1; return; }
+      let food, grams;
+      if(c[0]==='P'){ food=vegList?pickFood(vegList[(idx+planVariant)%vegList.length]):pickFood(c[1]); grams=food?clampG(mealProt*100/(food.p||15),40,260):0; }
+      else { food=pickFood(c[0]); grams=c[1]||100; }
+      if(food&&grams>0){ const it=mkItem(food,grams); resolved.push({it}); nonCarb+=it.kcal; }
+    });
+    if(carbIdx>=0 && resolved[carbIdx].food){ const cf=resolved[carbIdx].food; const g=clampG(Math.max(0,mealCal-nonCarb)*0.95*100/(cf.k||100),20,400); if(g>=20) resolved[carbIdx].it=mkItem(cf,g); }
+    const items=resolved.map(r=>r.it).filter(Boolean);
     const tot=items.reduce((t,x)=>{t.kcal+=x.kcal;t.protein+=x.protein;t.carbs+=x.carbs;t.fat+=x.fat;return t;},{kcal:0,protein:0,carbs:0,fat:0});
     return {key,label,items,totals:tot};
   });
@@ -1381,6 +1440,7 @@ function generateDayMenu(T,intake){
 async function buildPlan(){
   const intake=readIntake();
   if(!intake.weightKg){ toast('הזן משקל מהבדיקה'); return; }
+  planVariant++;
   const box=document.getElementById('plan-result');
   box.innerHTML=`<div class="card"><div class="loading"><div class="spinner"></div><div>בונה תוכנית... 🦌</div></div></div>`;
   await loadFoods();
@@ -1440,6 +1500,7 @@ document.addEventListener('click',e=>{
     case 'food-pick': openPortion(a.dataset.i); break;
     case 'portion-add': portionAdd(); break;
     case 'ft-addall': ftAddAll(); break;
+    case 'photo-meal': { const ph=document.getElementById('meal-photo'); if(ph) ph.click(); break; }
     case 'ftm-del': ftMatched.splice(+a.dataset.i,1); renderFtMatched(); break;
     case 'item-del': mealItems.splice(+a.dataset.i,1); buildMealUI(); break;
     case 'meal-load': loadMeal(a.dataset.sig); break;

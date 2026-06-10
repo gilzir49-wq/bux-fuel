@@ -1,5 +1,5 @@
 // Service Worker — מאפשר התקנה למסך הבית ועבודה אופליין (לוגינג עובד בלי אינטרנט).
-const CACHE = 'bux-fuel-v10';
+const CACHE = 'bux-fuel-v11';
 const ASSETS = [
   './',
   './index.html',
