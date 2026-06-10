@@ -202,7 +202,7 @@ function demoChat(messages){
   else if(/חומוס/.test(last)) ans='חומוס זה מצוין כמקור חלבון צמחי ושומן בריא — רק שים לב לכמות הטחינה והשמן. צלחת בינונית עם הרבה ירקות וקצת פחות פיתה, ואתה מסודר.';
   else if(/(לרזות|ירידה|שומן|דיאט)/.test(last)) ans='לירידה בריאה: גירעון קלורי מתון, הרבה חלבון לשובע ושמירת שריר, ירקות בכל ארוחה, ולא לוותר על שינה. בלי קיצוניות — זה מה שמחזיק לאורך זמן.';
   else ans='אני כאן בשבילך 💪 ספר לי מה אכלת או מה המטרה כרגע, ואכוון אותך בול. עקביות מנצחת כל דיאטה.';
-  return ans + (isDemo()? '\n\n(מצב הדגמה — אחרי חיבור ה-Worker התשובות יהיו מ-Claude עצמו) 🦌' : ' Let\'s Go BUX 🦌');
+  return ans + ' 🦌';
 }
 
 /* ===================== ניווט ===================== */
@@ -262,7 +262,7 @@ function renderHome(){
   document.getElementById('home-body').innerHTML = `
     <div class="hello">
       <h1>${greeting()}, <span>${esc(p.name||'אלוף')}</span> 🦌</h1>
-      <div class="sub">${heDate()}${isDemo()?' · <span class="demo-pill">מצב הדגמה</span>':''}</div>
+      <div class="sub">${heDate()}</div>
     </div>
 
     <div class="card">
@@ -683,7 +683,7 @@ function renderCoach(){
       <div class="suggestions">${sugg.map(s=>`<button data-act="chat-sugg" data-val="${esc(s)}">${s}</button>`).join('')}</div>
       <div class="chat-log" id="chat-log">
         ${chat.length?chat.map(m=>`<div class="msg ${m.role==='user'?'me':'bot'}">${esc(m.content)}</div>`).join('')
-          :`<div class="msg bot">היי ${esc(p.name||'')}! אני מאמן התזונה שלך 🦌 שאל אותי כל דבר — מה לאכול, איך להשלים חלבון, או אם משהו מתאים למטרה שלך.${isDemo()?'\n\n(כרגע במצב הדגמה — חבר את ה-Worker לתשובות AI מלאות)':''}</div>`}
+          :`<div class="msg bot">היי ${esc(p.name||'')}! אני מאמן התזונה שלך 🦌 שאל אותי כל דבר — מה לאכול, איך להשלים חלבון, או אם משהו מתאים למטרה שלך.</div>`}
       </div>
       <div class="chat-input">
         <input id="chat-text" placeholder="כתוב הודעה למאמן..." autocomplete="off">
