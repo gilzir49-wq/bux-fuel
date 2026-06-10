@@ -206,7 +206,7 @@ function demoChat(messages){
 }
 
 /* ===================== ניווט ===================== */
-const SUB_SCREENS = ['login','onboarding','meal','activity','dashboard'];
+const SUB_SCREENS = ['login','onboarding','meal','activity','dashboard','plan'];
 let current='home';
 function nav(screen){
   current=screen;
@@ -221,6 +221,7 @@ function render(screen){
   if(screen==='login') renderLogin();
   else if(screen==='dashboard') renderDashboard();
   else if(screen==='onboarding') renderOnboarding();
+  else if(screen==='plan') renderPlan();
   else if(screen==='home') renderHome();
   else if(screen==='meal') renderMeal();
   else if(screen==='activity') renderActivity();
@@ -832,8 +833,9 @@ function renderProfile(){
   const mealName={breakfast:'בוקר',lunch:'צהריים',dinner:'ערב',snack:'ביניים'};
   document.getElementById('profile-body').innerHTML=`
     <div class="hello"><h1>הפרופיל שלי 👤</h1><div class="sub">${esc(p.name)} · ${esc(goals[p.goal]||'')}</div></div>
+    <button class="btn" data-nav="plan" style="margin:0 14px 4px">🧠 יועץ התזונה — בנה לי תוכנית אישית</button>
     <div class="card">
-      <h3>🎯 היעדים שלי מגיא</h3>
+      <h3>🎯 היעדים שלי</h3>
       <div class="macros" style="grid-template-columns:repeat(2,1fr)">
         <div class="macro protein"><div class="mlabel">קלוריות</div><div class="mval">${p.calorieTarget}</div></div>
         <div class="macro"><div class="mlabel">חלבון</div><div class="mval">${p.proteinTarget}<span style="font-size:12px">ג'</span></div></div>
@@ -1262,6 +1264,146 @@ function checkCelebrations(){
 /* ===================== עזר ===================== */
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
+/* ===================== יועץ התזונה (בניית תוכנית) ===================== */
+let planResult=null;
+function renderPlan(){
+  const p=getProfile()||{};
+  const sexes=[['male','גבר'],['female','אישה']];
+  const goalsArr=[['fat_loss','חיטוב'],['maintain','שמירה'],['muscle','עליית מסה'],['performance','ביצועים']];
+  const acts=[['sedentary','יושבני'],['light','קלה'],['moderate','בינונית'],['high','גבוהה'],['athlete','ספורטאי']];
+  const diets=[['regular','רגיל'],['vegetarian','צמחוני'],['vegan','טבעוני']];
+  document.getElementById('plan-body').innerHTML=`
+    <div class="hello"><h1>בוא נבנה לך תוכנית 🦌</h1><div class="sub">הזן את הנתונים מהבדיקה האחרונה והמטרה — ואחשב יעדים מדויקים ואבנה תפריט.</div></div>
+    <div class="card">
+      <h3>📋 הנתונים שלך</h3>
+      <div class="row3">
+        <div class="field"><label>מין</label><select id="pl-sex">${sexes.map(([v,l])=>`<option value="${v}" ${p.sex===v?'selected':''}>${l}</option>`).join('')}</select></div>
+        <div class="field"><label>גיל</label><input id="pl-age" type="number" inputmode="numeric" value="${p.age||''}"></div>
+        <div class="field"><label>גובה ס"מ</label><input id="pl-height" type="number" inputmode="numeric" value="${p.height||''}"></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>משקל ק"ג</label><input id="pl-weight" type="number" step="0.1" inputmode="decimal" value="${p.weightCurrent||''}"></div>
+        <div class="field"><label>אחוז שומן (אם יש)</label><input id="pl-bf" type="number" step="0.1" inputmode="decimal" placeholder="לא חובה" value="${p.bodyFat||''}"></div>
+      </div>
+      <div class="field"><label>רמת פעילות</label><div class="chips" id="pl-act">${acts.map(([v,l])=>`<button class="chip ${(p.activityLevel||'moderate')===v?'on':''}" data-act="pick" data-group="pl-act" data-val="${v}">${l}</button>`).join('')}</div></div>
+    </div>
+    <div class="card">
+      <h3>🎯 המטרה וההעדפות</h3>
+      <div class="field"><label>מטרה</label><div class="chips" id="pl-goal">${goalsArr.map(([v,l])=>`<button class="chip ${(p.goal||'fat_loss')===v?'on':''}" data-act="pick" data-group="pl-goal" data-val="${v}">${l}</button>`).join('')}</div></div>
+      <div class="field"><label>סגנון תזונה</label><div class="chips" id="pl-diet">${diets.map(([v,l],i)=>`<button class="chip ${i===0?'on':''}" data-act="pick" data-group="pl-diet" data-val="${v}">${l}</button>`).join('')}</div></div>
+      <div class="field"><label>כמה ארוחות ביום?</label><div class="chips" id="pl-meals">${[3,4,5].map(v=>`<button class="chip ${v===4?'on':''}" data-act="pick" data-group="pl-meals" data-val="${v}">${v}</button>`).join('')}</div></div>
+      <div class="field"><label>לא אוכל / אלרגיות (אופציונלי)</label><input id="pl-dislikes" placeholder="למשל: בלי דגים, רגישות ללקטוז" value="${esc(p.dislikes||'')}"></div>
+    </div>
+    <button class="btn" data-act="build-plan" style="margin:0 14px">🧠 בנה לי תוכנית</button>
+    <div id="plan-result"></div>
+    <div class="foot-note">מבוסס נוסחאות תזונה מקובלות (Mifflin-St Jeor / Katch-McArdle) 🦌</div>`;
+}
+function readIntake(){
+  const g=id=>(document.getElementById(id)||{}).value;
+  const pick=grp=>{ const e=document.querySelector('#'+grp+' .chip.on'); return e?e.dataset.val:null; };
+  return { sex:g('pl-sex')||'male', age:+g('pl-age')||30, heightCm:+g('pl-height')||170, weightKg:+g('pl-weight')||0,
+    bodyFatPct:+g('pl-bf')||0, activityLevel:pick('pl-act')||'moderate', goal:pick('pl-goal')||'fat_loss',
+    dietStyle:pick('pl-diet')||'regular', mealsCount:+pick('pl-meals')||4, dislikes:g('pl-dislikes')||'' };
+}
+function computeTargets(d){
+  const w=d.weightKg, h=d.heightCm, a=d.age;
+  let bmr, method;
+  if(d.bodyFatPct>0 && d.bodyFatPct<60){ const lbm=w*(1-d.bodyFatPct/100); bmr=370+21.6*lbm; method='Katch-McArdle'; }
+  else { bmr=10*w+6.25*h-5*a+(d.sex==='female'?-161:5); method='Mifflin-St Jeor'; }
+  const AF={sedentary:1.3,light:1.45,moderate:1.6,high:1.75,athlete:1.9};
+  const tdee=bmr*(AF[d.activityLevel]||1.6);
+  const adj={fat_loss:-0.18,maintain:0,muscle:0.10,performance:0.05};
+  let cal=Math.round(tdee*(1+(adj[d.goal]||0))/10)*10;
+  const floor=d.sex==='female'?1200:1500; if(cal<floor) cal=floor;
+  const protPerKg=d.goal==='muscle'?2.0:d.goal==='fat_loss'?2.1:1.8;
+  const protein=Math.round(w*protPerKg);
+  const fat=Math.round(w*0.9);
+  const carbs=Math.max(40, Math.round((cal-protein*4-fat*9)/4));
+  return {bmr:Math.round(bmr), tdee:Math.round(tdee), calories:cal, protein, carbs, fat, method};
+}
+// מאגרי בחירה — שאילתות נקיות שמתאימות לרשומות אמיתיות במאגר משרד הבריאות
+const PROT_BY_MEAL={
+  breakfast:[["ביצה קשה שלמה","ביצה קשה"],["גבינת קוטג' 5%","קוטג'"],["יוגורט 3% שומן תנובה","יוגורט 3"],["גבינה לבנה 5% שומן, תנובה","גבינה לבנה 5"]],
+  lunch:[["בשר עוף, חזה אפוי בשמן זית","חזה עוף אפוי"],["דג סלמון אפוי ללא","סלמון אפוי"],["דג טונה, מבושל במים","טונה מבושל"]],
+  snack:[["יוגורט 3% שומן תנובה","יוגורט 3"],["גבינת קוטג' 5%","קוטג'"],["גבינה לבנה 5% שומן, תנובה","גבינה לבנה 5"]],
+  dinner:[["בשר עוף, חזה אפוי בשמן זית","חזה עוף אפוי"],["דג טונה, משומר במים","טונה במים"],["דג סלמון אפוי ללא","סלמון אפוי"]]
+};
+const PROT_VEG=[["עדשים, מונבטים מבושלים","עדשים מבושל"],["גבינת קוטג' 5%","קוטג'"],["טופו מטוגן","טופו"],["חומוס, ביתי","חומוס"]];
+const PROT_VEGAN=[["עדשים, מונבטים מבושלים","עדשים מבושל"],["טופו מטוגן","טופו"],["חומוס, ביתי","חומוס"],["שעועית לבנה מבושלת","שעועית"]];
+const CARB_BY_MEAL={
+  breakfast:[["דייסת שיבולת שועל","שיבולת שועל"],["לחם מחיטה מלאה, קלוי","לחם מלא"]],
+  lunch:[["אורז לבן מבושל עם שמן סויה","אורז מבושל"],["בטטה","בטטה"]],
+  snack:[["בננה, טריה","בננה"],["לחם מחיטה מלאה, קלוי","לחם מלא"]],
+  dinner:[["בטטה","בטטה"],["אורז לבן מבושל עם שמן סויה","אורז מבושל"]]
+};
+const VEG_BY=[["סלט ירקות עם שמן זית","סלט ירקות"],["ברוקולי, טרי","ברוקולי"]];
+function pickFood(pair){ for(const q of pair){ const f=searchFoods(q)[0]; if(f) return f; } return null; }
+function mkItem(f,grams){ const fac=grams/100; return {name:f.n, grams:R(grams), kcal:R(f.k*fac), protein:R(f.p*fac), carbs:R(f.c*fac), fat:R(f.f*fac)}; }
+function clampG(g,lo,hi){ return Math.max(lo,Math.min(hi,Math.round(g/5)*5)); }
+function generateDayMenu(T,intake){
+  const dist={3:[['breakfast','בוקר',0.30],['lunch','צהריים',0.40],['dinner','ערב',0.30]],
+    4:[['breakfast','בוקר',0.25],['lunch','צהריים',0.35],['snack','ביניים',0.15],['dinner','ערב',0.25]],
+    5:[['breakfast','בוקר',0.22],['snack','ביניים',0.12],['lunch','צהריים',0.30],['snack','ביניים',0.12],['dinner','ערב',0.24]]}[intake.mealsCount||4];
+  const vegMode=intake.dietStyle==='vegan'?PROT_VEGAN:(intake.dietStyle==='vegetarian'?PROT_VEG:null);
+  return dist.map((m,i)=>{
+    const [key,label,pct]=m;
+    const mealCal=T.calories*pct, mealProt=T.protein*pct;
+    const items=[];
+    const protList=vegMode||PROT_BY_MEAL[key];
+    const pf=pickFood(protList[i%protList.length]);
+    if(pf) items.push(mkItem(pf, clampG(mealProt*100/(pf.p||15),40,220)));
+    let used=items.reduce((s,x)=>s+x.kcal,0);
+    const carbList=CARB_BY_MEAL[key]||CARB_BY_MEAL.lunch;
+    const cf=pickFood(carbList[i%carbList.length]);
+    if(cf){ const g=clampG(Math.max(0,mealCal-used)*0.92*100/(cf.k||100),0,400); if(g>=20){ items.push(mkItem(cf,g)); used+=R(cf.k*g/100); } }
+    if(key==='lunch'||key==='dinner'){ const vf=pickFood(VEG_BY[i%VEG_BY.length]); if(vf) items.push(mkItem(vf,150)); }
+    const tot=items.reduce((t,x)=>{t.kcal+=x.kcal;t.protein+=x.protein;t.carbs+=x.carbs;t.fat+=x.fat;return t;},{kcal:0,protein:0,carbs:0,fat:0});
+    return {key,label,items,totals:tot};
+  });
+}
+async function buildPlan(){
+  const intake=readIntake();
+  if(!intake.weightKg){ toast('הזן משקל מהבדיקה'); return; }
+  const box=document.getElementById('plan-result');
+  box.innerHTML=`<div class="card"><div class="loading"><div class="spinner"></div><div>בונה תוכנית... 🦌</div></div></div>`;
+  await loadFoods();
+  const T=computeTargets(intake);
+  planResult={T, menu:generateDayMenu(T,intake), intake};
+  renderPlanResult();
+}
+function renderPlanResult(){
+  const {T,menu}=planResult; const box=document.getElementById('plan-result');
+  const d=menu.reduce((t,m)=>{t.kcal+=m.totals.kcal;t.protein+=m.totals.protein;t.carbs+=m.totals.carbs;t.fat+=m.totals.fat;return t;},{kcal:0,protein:0,carbs:0,fat:0});
+  box.innerHTML=`
+    <div class="card" style="border-color:var(--yellow)">
+      <h3>🎯 היעדים האישיים שלך</h3>
+      <div class="macros" style="grid-template-columns:repeat(2,1fr)">
+        <div class="macro protein"><div class="mlabel">קלוריות ליום</div><div class="mval">${T.calories}</div></div>
+        <div class="macro"><div class="mlabel">חלבון</div><div class="mval">${T.protein}<span style="font-size:12px">ג'</span></div></div>
+        <div class="macro"><div class="mlabel">פחמימה</div><div class="mval">${T.carbs}<span style="font-size:12px">ג'</span></div></div>
+        <div class="macro"><div class="mlabel">שומן</div><div class="mval">${T.fat}<span style="font-size:12px">ג'</span></div></div>
+      </div>
+      <div class="hint" style="text-align:center;margin-top:10px">חילוף חומרים במנוחה ~${T.bmr} · הוצאה יומית ~${T.tdee} קל' · ${T.method}</div>
+    </div>
+    <div class="section-title">📖 תפריט יומי לדוגמה</div>
+    ${menu.map(m=>`<div class="card tight"><h3>${m.label} · ${R(m.totals.kcal)} קל' · ${R(m.totals.protein)} ג' חלבון</h3>
+      ${m.items.map(it=>`<div class="list-item"><div class="li-main" style="font-size:14px">${esc(it.name.split(',')[0])}</div><div style="display:flex;gap:12px;align-items:center"><span class="li-sub">${it.grams} ג'</span><span class="li-k">${it.kcal}</span></div></div>`).join('')}</div>`).join('')}
+    <div class="card tight"><div class="hint" style="text-align:center">סה"כ בתפריט: ${R(d.kcal)} קל' · ${R(d.protein)} חלבון · ${R(d.carbs)} פחמימה · ${R(d.fat)} שומן</div></div>
+    <button class="btn" data-act="apply-plan" style="margin:0 14px">✅ החל את התוכנית באפליקציה</button>
+    <button class="btn ghost" data-act="build-plan" style="margin:10px 14px">🔄 בנה מחדש</button>`;
+}
+function applyPlan(){
+  if(!planResult) return; const {T,menu,intake}=planResult; const p=getProfile()||{};
+  const np={...p, name:p.name, sex:intake.sex, age:intake.age, height:intake.heightCm, weightCurrent:intake.weightKg,
+    bodyFat:intake.bodyFatPct||p.bodyFat, goal:intake.goal, activityLevel:intake.activityLevel,
+    calorieTarget:T.calories, proteinTarget:T.protein, carbTarget:T.carbs, fatTarget:T.fat,
+    waterTarget:Math.max(2, Math.round(intake.weightKg*0.033*10)/10), dislikes:intake.dislikes,
+    menuPlan:menu.map(m=>({meal:m.key, description:m.items.map(i=>`${i.name.split(',')[0]} ${i.grams} ג'`).join(' + ')})),
+    notes:(intake.dislikes?intake.dislikes+'. ':'')+`תוכנית יועץ BUX: ${T.calories} קל', ${T.protein}ח/${T.carbs}פ/${T.fat}ש.` };
+  saveProfile(np); pushProfile(np);
+  nav('home'); setTimeout(()=>celebrate('התוכנית מוכנה! 🦌','היעדים והתפריט שלך מוגדרים. עכשיו רק לרשום ולעקוב 💪'),450);
+}
+
 /* ===================== מפיץ אירועים ===================== */
 document.addEventListener('click',e=>{
   const nv=e.target.closest('[data-nav]'); if(nv){ nav(nv.dataset.nav); return; }
@@ -1295,6 +1437,8 @@ document.addEventListener('click',e=>{
       toast('המשקל נשמר ⚖️'); renderProgress(); break; }
     case 'weekly-report': weeklyReport(); break;
     case 'pick': { document.querySelectorAll('#'+a.dataset.group+' .chip').forEach(c=>c.classList.remove('on')); a.classList.add('on'); break; }
+    case 'build-plan': buildPlan(); break;
+    case 'apply-plan': applyPlan(); break;
     case 'finish-onboarding': finishOnboarding(); break;
     case 'save-profile': saveProfileEdits(); break;
     case 'coach-logout': setCoach(false); toast('יצאת ממצב מאמן'); renderProfile(); break;
