@@ -101,7 +101,7 @@ async function aiPost(path, body){
   if(!res.ok){ const tx=await res.text().catch(()=> ''); throw new Error('AI '+res.status+' '+tx); }
   return res.json();
 }
-async function analyzeMeal(text){ const r=await aiPost('/analyze-meal',{text}); return r||demoMeal(text); }
+async function analyzeMeal(text){ const r=await aiPost('/analyze-meal',{text, context:buildMealContext()}); return r||demoMeal(text); }
 async function analyzeActivity(text,weight){ const r=await aiPost('/analyze-activity',{text,weight}); return r||demoActivity(text,weight); }
 async function coachFeedback(ctx,p,t){ const r=await aiPost('/coach',{mode:'feedback',context:ctx}); return (r&&r.text)||demoFeedback(p,t); }
 async function coachChat(messages,ctx){ const r=await aiPost('/coach',{messages,context:ctx}); return (r&&r.text)||demoChat(messages); }
@@ -357,6 +357,37 @@ function contextString(p,log,t){
   return s;
 }
 
+/* ===================== הקשר אישי לניתוח ארוחה ===================== */
+// אובייקט מובנה שנשלח ל-Anthropic בכל קריאת ניתוח/פענוח ארוחה, כך שה-AI מכיר
+// את המתאמן/ת: פרופיל, יעדים יומיים, צבירת המאקרו של היום, והנחיות המאמנת גיא.
+const GOALS_HE={fat_loss:'חיטוב / ירידה באחוז שומן',muscle:'עלייה במסת שריר',maintain:'שמירה על המשקל',performance:'שיפור ביצועים'};
+const ACTIVITY_HE={sedentary:'יושבני (מעט תנועה)',light:'פעילות קלה',moderate:'פעילות בינונית',high:'פעילות גבוהה',athlete:'ספורטאי/ת'};
+function buildMealContext(){
+  const p=getProfile()||{}; const log=todayLog(); const t=totals(log);
+  const rem=(target,have)=>Math.max(0, Math.round((+target||0)-have));
+  return {
+    profile:{
+      sex: p.sex||null, age: p.age||null,
+      heightCm: p.height||null, weightKg: p.weightCurrent||null,
+      activityLevel: ACTIVITY_HE[p.activityLevel]||null,
+      goal: GOALS_HE[p.goal]||null
+    },
+    dailyTargets:{
+      calories: +p.calorieTarget||null, proteinG: +p.proteinTarget||null,
+      carbsG: +p.carbTarget||null, fatG: +p.fatTarget||null
+    },
+    consumedToday:{
+      calories: R(t.kcal), proteinG: R(t.protein), carbsG: R(t.carbs), fatG: R(t.fat),
+      burnedKcal: R(t.burn), mealsLogged: (log.meals||[]).length
+    },
+    remainingToday:{
+      calories: rem(p.calorieTarget,R(t.kcal)), proteinG: rem(p.proteinTarget,R(t.protein)),
+      carbsG: rem(p.carbTarget,R(t.carbs)), fatG: rem(p.fatTarget,R(t.fat))
+    },
+    coachGuidelines: p.notes||null
+  };
+}
+
 /* ===================== מסך הוספת ארוחה (מאגר משרד הבריאות) ===================== */
 let FOODS=null, FOODS_LOADING=null;
 let mealItems=[], currentMealType='breakfast', mealMode='search', portionFood=null;
@@ -545,7 +576,7 @@ function localParse(text){
 }
 async function parseMeal(text){
   const base=workerBase();
-  if(base){ try{ const r=await aiPost('/parse-meal',{text}); if(r&&Array.isArray(r.items)&&r.items.length) return r.items; }catch(e){} }
+  if(base){ try{ const r=await aiPost('/parse-meal',{text, context:buildMealContext()}); if(r&&Array.isArray(r.items)&&r.items.length) return r.items; }catch(e){} }
   return localParse(text);
 }
 function groundItem(p){
@@ -944,6 +975,9 @@ function renderOnboarding(){
       <div class="field"><label>המטרה שלך</label>
         <div class="chips" id="o-goal">${goalsArr.map(([v,l],i)=>`<button class="chip ${i===0?'on':''}" data-act="pick" data-group="o-goal" data-val="${v}">${l}</button>`).join('')}</div>
       </div>
+      <div class="field"><label>רמת פעילות</label>
+        <div class="chips" id="o-activity">${[['sedentary','יושבני'],['light','קלה'],['moderate','בינונית'],['high','גבוהה'],['athlete','ספורטאי']].map(([v,l])=>`<button class="chip ${v==='moderate'?'on':''}" data-act="pick" data-group="o-activity" data-val="${v}">${l}</button>`).join('')}</div>
+      </div>
     </div>
 
     <div class="card">
@@ -984,6 +1018,7 @@ function finishOnboarding(){
   const name=(g('o-name')||'').trim();
   if(!name){ toast('רק תכתוב לי איך קוראים לך 🙂'); document.getElementById('o-name').focus(); return; }
   const goalPick=document.querySelector('#o-goal .chip.on');
+  const actPick=document.querySelector('#o-activity .chip.on');
   const budgetPick=document.querySelector('#o-budget .chip.on');
   const menu=[];
   ['breakfast','lunch','dinner','snack'].forEach(k=>{ const v=g('o-m-'+k); if(v&&v.trim()) menu.push({meal:k,description:v.trim()}); });
@@ -992,6 +1027,7 @@ function finishOnboarding(){
     name, age:+g('o-age')||null, sex:g('o-sex')||'male', height:+g('o-height')||null,
     weightStart:+g('o-ws')||wc||null, weightCurrent:wc||null, weightTarget:+g('o-wt')||null,
     goal: goalPick?goalPick.dataset.val:'fat_loss',
+    activityLevel: actPick?actPick.dataset.val:'moderate',
     calorieTarget:+g('o-cal')||2000, proteinTarget:+g('o-prot')||130, carbTarget:+g('o-carb')||200,
     fatTarget:+g('o-fat')||60, waterTarget:+g('o-water')||2.5,
     menuPlan:menu, notes:(g('o-notes')||'').trim(),

@@ -29,6 +29,12 @@ function json(data, env, origin, status = 200) {
   });
 }
 
+// בונה קדם-טקסט עם ההקשר האישי של המתאמן (פרופיל, יעדים, צבירת היום, הנחיות גיא)
+function ctxPreamble(context) {
+  if (!context) return '';
+  return `הקשר על המתאמן/ת (לשימושך בלבד, אל תחזור/י עליו מילה במילה):\n${JSON.stringify(context)}\n\n`;
+}
+
 // חילוץ JSON מתשובת המודל גם אם עטף ב-```json ... ```
 function parseModelJson(text) {
   if (!text) return null;
@@ -65,15 +71,23 @@ async function callClaude(env, system, userContent, maxTokens = 700) {
 }
 
 // ---- מערכת ההנחיות לכל נתיב ----
-const SYS_MEAL = `את/ה מומחה/ית תזונה ישראלי/ת. נתח/י את תיאור הארוחה והערך/י ערכים תזונתיים.
-זהה/י מאכלים ישראליים נפוצים (חומוס, שניצל, פיתה, לאפה, קוטג', במבה, פלאפל, טחינה, בורקס וכו').
-אם לא ניתנה כמות — הנח/י כמות סבירה למבוגר. החזר/י JSON בלבד במבנה הזה:
+const SYS_MEAL = `את/ה מנתח/ת התזונה של חדר הכושר קרוספיט BUX, דובר/ת עברית ומכיר/ה מאכלים ישראליים נפוצים (חומוס, שניצל, פיתה, לאפה, קוטג', במבה, פלאפל, טחינה, בורקס וכו').
+תקבל/י תיאור ארוחה וגם הקשר על המתאמן/ת (JSON): פרופיל, יעדי מאקרו יומיים, סיכום מה שכבר נאכל היום (consumedToday + remainingToday), והנחיות המאמנת גיא (coachGuidelines).
+
+נתח/י את הארוחה והערך/י ערכים תזונתיים, ותוך כך:
+- אם לא צוינה כמות — הנח/י כמות סבירה לפי המין, המשקל ורמת הפעילות של המתאמן/ת.
+- כתוב/כתבי "note" אישי וקצר בעברית שמתייחס למצב היום: אם נותר חלבון רב להשלים (remainingToday.proteinG) ציין/י זאת; אם הארוחה מקפיצה מעל הקלוריות שנותרו, כוון/י בעדינות; התאם/י לפי המטרה (חיטוב/מסה/שמירה).
+- כבד/י תמיד את הנחיות גיא (אלרגיות, איסורים, העדפות). אל תמליץ/י על משהו שמנוגד להן.
+- אל תהיה/י שיפוטי/ת, ועודד/י גישה בריאה ובת-קיימא.
+
+החזר/י JSON בלבד במבנה הזה:
 {"items":[{"name":"...","kcal":0,"protein":0,"carbs":0,"fat":0}],
  "total":{"kcal":0,"protein":0,"carbs":0,"fat":0},
- "note":"משפט קצר אחד בעברית"}
+ "note":"משפט אישי קצר בעברית, רשאי לכלול 🦌"}
 אל תוסיף/י שום טקסט מחוץ ל-JSON.`;
 
-const SYS_PARSE = `את/ה מנוע שמחלץ מאכלים מתיאור ארוחה בעברית, כדי לחבר אותם למאגר מזון.
+const SYS_PARSE = `את/ה מנוע שמחלץ מאכלים מתיאור ארוחה בעברית, כדי לחבר אותם למאגר מזון רשמי.
+ייתכן שתקבל/י גם הקשר על המתאמן/ת (JSON) — השתמש/י בו רק כדי להניח כמות סבירה כשלא צוינה (לפי המין/המשקל/רמת הפעילות).
 לכל מאכל החזר/י: q = שם המאכל בעברית בצורה פשוטה ובסיסית כפי שמופיע במאגר מזון (למשל "לחם לבן", "חזה עוף", "גבינה צהובה", "קוטג'"); amount = כמות מספרית (ברירת מחדל 1); unit = יחידת מידה בעברית (פרוסה/כף/כפית/כוס/יחידה/גביע/צלחת/קערית) או null אם צוין משקל; grams = משקל בגרמים אם צוין במפורש, אחרת null.
 החזר/י JSON בלבד: {"items":[{"q":"...","amount":1,"unit":"פרוסה","grams":null}]}
 אל תוסיף/י טקסט מחוץ ל-JSON ואל תמציא/י ערכים תזונתיים — רק זיהוי המאכל והכמות.`;
@@ -114,7 +128,7 @@ export default {
     try {
       if (path.endsWith('/parse-meal')) {
         const text = String(body.text || '').slice(0, 1500);
-        const out = await callClaude(env, SYS_PARSE, `הארוחה: ${text}`, 700);
+        const out = await callClaude(env, SYS_PARSE, ctxPreamble(body.context) + `הארוחה: ${text}`, 700);
         const parsed = parseModelJson(out);
         if (!parsed) return json({ error: 'parse', raw: out }, env, origin, 502);
         return json(parsed, env, origin);
@@ -122,7 +136,7 @@ export default {
 
       if (path.endsWith('/analyze-meal')) {
         const text = String(body.text || '').slice(0, 1500);
-        const out = await callClaude(env, SYS_MEAL, `הארוחה: ${text}`, 800);
+        const out = await callClaude(env, SYS_MEAL, ctxPreamble(body.context) + `הארוחה לניתוח: ${text}`, 800);
         const parsed = parseModelJson(out);
         if (!parsed) return json({ error: 'parse', raw: out }, env, origin, 502);
         return json(parsed, env, origin);
