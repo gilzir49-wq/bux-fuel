@@ -624,7 +624,7 @@ function saveMealCart(){
     kcal:R(tot.kcal), protein:R(tot.protein), carbs:R(tot.carbs), fat:R(tot.fat), items:mealItems.slice() });
   rememberMeal(mealItems, currentMealType);
   saveLog(todayKey(),log); bumpStreak(); mealItems=[];
-  toast('הארוחה נשמרה! 🦌'); nav('home');
+  toast('הארוחה נשמרה! 🦌'); nav('home'); checkCelebrations();
 }
 
 /* ===================== מסך הוספת אימון ===================== */
@@ -669,7 +669,7 @@ function saveAct(){
   const log=todayLog();
   log.activities.push({ type:lastAct.activity, activity:lastAct.activity, minutes:lastAct.minutes, intensity:'', kcalBurned:lastAct.kcalBurned });
   saveLog(todayKey(),log); bumpStreak(); lastAct=null;
-  toast('אימון נשמר! 💪🦌'); nav('home');
+  toast('אימון נשמר! 💪🦌'); nav('home'); checkCelebrations();
 }
 
 /* ===================== צ'אט מאמן ===================== */
@@ -1222,8 +1222,42 @@ function resetAll(){
 let toastT;
 function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show');
   clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'),2400); }
-function showModal(html){ document.getElementById('modal').innerHTML=html; document.getElementById('overlay').classList.add('show'); }
+function showModal(html){ const m=document.getElementById('modal'); m.className='modal'; m.innerHTML=html; document.getElementById('overlay').classList.add('show'); }
 function closeModal(){ document.getElementById('overlay').classList.remove('show'); }
+
+/* ===================== רגעי חגיגה 🎉 ===================== */
+function confetti(){
+  const c=document.createElement('div'); c.className='confetti';
+  const emo=['🦌','⭐','💪','🟡','🟢','🔥'];
+  for(let i=0;i<26;i++){ const s=document.createElement('span');
+    s.textContent=emo[i%emo.length];
+    s.style.left=(Math.random()*100)+'%';
+    s.style.fontSize=(16+Math.random()*18)+'px';
+    s.style.animationDuration=(1.2+Math.random()*1.4)+'s';
+    s.style.animationDelay=(Math.random()*0.4)+'s';
+    c.appendChild(s); }
+  document.body.appendChild(c);
+  setTimeout(()=>c.remove(),3200);
+}
+function celebrate(title,msg){
+  confetti();
+  document.getElementById('modal').className='modal celebrate';
+  document.getElementById('modal').innerHTML=`<img class="badge" src="./logos/logo-badge-green.png" alt="BUX">
+    <h2>${esc(title)}</h2><p>${esc(msg)}</p>
+    <button class="btn" data-act="close-modal">יאללה BUX 🦌</button>`;
+  document.getElementById('overlay').classList.add('show');
+}
+// בודק אם נפתח הישג חדש היום ומפעיל חגיגה אחת (כל הישג פעם אחת ביום)
+function checkCelebrations(){
+  const p=getProfile()||{}; const log=todayLog(); const t=totals(log);
+  log.celebrated=log.celebrated||[]; const done=new Set(log.celebrated);
+  const fire=(key,title,msg)=>{ if(done.has(key)) return true; log.celebrated.push(key); saveLog(todayKey(),log);
+    setTimeout(()=>celebrate(title,msg),400); return true; };
+  const st=store.get(KEYS.streak,{current:0});
+  if(p.proteinTarget && t.protein>=p.proteinTarget && !done.has('protein')) return fire('protein','סגרת את החלבון! 💪',`${R(t.protein)} ג' חלבון — בול על היעד. ככה בונים שריר 🦌`);
+  for(const m of [30,14,7,3]){ if((st.current||0)>=m && !done.has('streak'+m)) return fire('streak'+m,`רצף ${m} ימים! 🔥`,'אתה במומנטום מטורף — תמשיך לתדלק נכון 🦌'); }
+  if(((log.meals||[]).length+(log.activities||[]).length)===1 && !done.has('firstlog')) return fire('firstlog','יצאת לדרך! 🦌','הצעד הראשון של היום נרשם. קדימה לסגור אותו יפה 💪');
+}
 
 /* ===================== עזר ===================== */
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }

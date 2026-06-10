@@ -246,6 +246,13 @@ a{color:var(--yellow)}
 .modal input:focus{outline:none;border-color:var(--yellow)}
 .modal .pin{font-size:30px;letter-spacing:12px;font-weight:900;text-align:center;padding-right:12px}
 
+/* ----- קונפטי חגיגה ----- */
+.confetti{position:fixed;inset:0;pointer-events:none;z-index:90;overflow:hidden}
+.confetti span{position:absolute;top:-40px;will-change:transform;animation:confetti-fall linear forwards}
+@keyframes confetti-fall{from{transform:translateY(0) rotate(0)}to{transform:translateY(112vh) rotate(540deg);opacity:.15}}
+.modal.celebrate{animation:pop .4s cubic-bezier(.3,1.4,.5,1)}
+@keyframes pop{from{transform:scale(.7);opacity:0}to{transform:scale(1);opacity:1}}
+
 .center-logo{text-align:center;padding:18px 0 4px}
 .center-logo img{width:min(78%,320px);mix-blend-mode:screen}
 
