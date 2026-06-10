@@ -1290,6 +1290,10 @@ function renderPlan(){
     <div class="card">
       <h3>🎯 המטרה וההעדפות</h3>
       <div class="field"><label>מטרה</label><div class="chips" id="pl-goal">${goalsArr.map(([v,l])=>`<button class="chip ${(p.goal||'fat_loss')===v?'on':''}" data-act="pick" data-group="pl-goal" data-val="${v}">${l}</button>`).join('')}</div></div>
+      <div class="row2">
+        <div class="field"><label>יעד משקל ק"ג</label><input id="pl-twt" type="number" step="0.1" inputmode="decimal" placeholder="לא חובה" value="${p.weightTarget||''}"></div>
+        <div class="field"><label>יעד אחוז שומן</label><input id="pl-tbf" type="number" step="0.1" inputmode="decimal" placeholder="לא חובה"></div>
+      </div>
       <div class="field"><label>סגנון תזונה</label><div class="chips" id="pl-diet">${diets.map(([v,l],i)=>`<button class="chip ${i===0?'on':''}" data-act="pick" data-group="pl-diet" data-val="${v}">${l}</button>`).join('')}</div></div>
       <div class="field"><label>כמה ארוחות ביום?</label><div class="chips" id="pl-meals">${[3,4,5].map(v=>`<button class="chip ${v===4?'on':''}" data-act="pick" data-group="pl-meals" data-val="${v}">${v}</button>`).join('')}</div></div>
       <div class="field"><label>לא אוכל / אלרגיות (אופציונלי)</label><input id="pl-dislikes" placeholder="למשל: בלי דגים, רגישות ללקטוז" value="${esc(p.dislikes||'')}"></div>
@@ -1303,6 +1307,7 @@ function readIntake(){
   const pick=grp=>{ const e=document.querySelector('#'+grp+' .chip.on'); return e?e.dataset.val:null; };
   return { sex:g('pl-sex')||'male', age:+g('pl-age')||30, heightCm:+g('pl-height')||170, weightKg:+g('pl-weight')||0,
     bodyFatPct:+g('pl-bf')||0, activityLevel:pick('pl-act')||'moderate', goal:pick('pl-goal')||'fat_loss',
+    targetWeightKg:+g('pl-twt')||0, targetBodyFatPct:+g('pl-tbf')||0,
     dietStyle:pick('pl-diet')||'regular', mealsCount:+pick('pl-meals')||4, dislikes:g('pl-dislikes')||'' };
 }
 function computeTargets(d){
@@ -1312,14 +1317,26 @@ function computeTargets(d){
   else { bmr=10*w+6.25*h-5*a+(d.sex==='female'?-161:5); method='Mifflin-St Jeor'; }
   const AF={sedentary:1.3,light:1.45,moderate:1.6,high:1.75,athlete:1.9};
   const tdee=bmr*(AF[d.activityLevel]||1.6);
-  const adj={fat_loss:-0.18,maintain:0,muscle:0.10,performance:0.05};
-  let cal=Math.round(tdee*(1+(adj[d.goal]||0))/10)*10;
+  const lean = d.bodyFatPct>0 && d.bodyFatPct<14;     // כבר רזה — קצב מתון יותר
+  let cal, weeks=0, rateKg=0, plan='';
+  if(d.goal==='fat_loss'){
+    if(d.targetWeightKg && d.targetWeightKg<w){
+      rateKg=Math.max(0.2, w*(lean?0.0035:0.006));     // ~0.35%/שבוע לרזים, 0.6% אחרת
+      const dailyDef=Math.min(tdee*0.22, rateKg*7700/7);
+      cal=tdee-dailyDef;
+      weeks=Math.max(1, Math.ceil((w-d.targetWeightKg)/rateKg));
+      plan=`יעד ${d.targetWeightKg} ק"ג${d.targetBodyFatPct?` / ${d.targetBodyFatPct}% שומן`:''} · קצב בריא ~${rateKg.toFixed(1)} ק"ג בשבוע · בערך ${weeks} שבועות`;
+    } else cal=tdee*(lean?0.88:0.82);
+  } else if(d.goal==='muscle'){ cal=tdee*1.10; plan='עודף קלורי מתון לבניית שריר'; }
+  else if(d.goal==='performance'){ cal=tdee*1.05; }
+  else { cal=tdee; plan='שמירה על המשקל'; }
+  cal=Math.round(cal/10)*10;
   const floor=d.sex==='female'?1200:1500; if(cal<floor) cal=floor;
-  const protPerKg=d.goal==='muscle'?2.0:d.goal==='fat_loss'?2.1:1.8;
+  const protPerKg=d.goal==='muscle'?2.0:(d.goal==='fat_loss'?(lean?2.3:2.1):1.8);
   const protein=Math.round(w*protPerKg);
   const fat=Math.round(w*0.9);
   const carbs=Math.max(40, Math.round((cal-protein*4-fat*9)/4));
-  return {bmr:Math.round(bmr), tdee:Math.round(tdee), calories:cal, protein, carbs, fat, method};
+  return {bmr:Math.round(bmr), tdee:Math.round(tdee), calories:cal, protein, carbs, fat, method, weeks, plan, lean};
 }
 // מאגרי בחירה — שאילתות נקיות שמתאימות לרשומות אמיתיות במאגר משרד הבריאות
 const PROT_BY_MEAL={
@@ -1383,7 +1400,9 @@ function renderPlanResult(){
         <div class="macro"><div class="mlabel">פחמימה</div><div class="mval">${T.carbs}<span style="font-size:12px">ג'</span></div></div>
         <div class="macro"><div class="mlabel">שומן</div><div class="mval">${T.fat}<span style="font-size:12px">ג'</span></div></div>
       </div>
-      <div class="hint" style="text-align:center;margin-top:10px">חילוף חומרים במנוחה ~${T.bmr} · הוצאה יומית ~${T.tdee} קל' · ${T.method}</div>
+      ${T.plan?`<div class="hint" style="text-align:center;margin-top:10px;color:var(--yellow);font-weight:700">🎯 ${esc(T.plan)}</div>`:''}
+      ${T.lean?`<div class="hint" style="text-align:center;margin-top:4px">אתה כבר רזה — קצב מתון + חלבון גבוה ישמרו על השריר שבנית 🦌</div>`:''}
+      <div class="hint" style="text-align:center;margin-top:6px">חילוף חומרים במנוחה ~${T.bmr} · הוצאה יומית ~${T.tdee} קל' · ${T.method}</div>
     </div>
     <div class="section-title">📖 תפריט יומי לדוגמה</div>
     ${menu.map(m=>`<div class="card tight"><h3>${m.label} · ${R(m.totals.kcal)} קל' · ${R(m.totals.protein)} ג' חלבון</h3>
@@ -1395,6 +1414,7 @@ function renderPlanResult(){
 function applyPlan(){
   if(!planResult) return; const {T,menu,intake}=planResult; const p=getProfile()||{};
   const np={...p, name:p.name, sex:intake.sex, age:intake.age, height:intake.heightCm, weightCurrent:intake.weightKg,
+    weightTarget:intake.targetWeightKg||p.weightTarget,
     bodyFat:intake.bodyFatPct||p.bodyFat, goal:intake.goal, activityLevel:intake.activityLevel,
     calorieTarget:T.calories, proteinTarget:T.protein, carbTarget:T.carbs, fatTarget:T.fat,
     waterTarget:Math.max(2, Math.round(intake.weightKg*0.033*10)/10), dislikes:intake.dislikes,
